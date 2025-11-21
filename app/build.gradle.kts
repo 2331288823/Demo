@@ -113,6 +113,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.viewbinding)
     implementation(libs.androidx.compose.ui.googlefonts)
 
+    // Add extended icons dependency and core icons dependency
+    implementation(libs.androidx.compose.material.iconsExtended)
+    implementation(libs.androidx.material.icons.core)
+
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     androidTestImplementation(libs.junit)

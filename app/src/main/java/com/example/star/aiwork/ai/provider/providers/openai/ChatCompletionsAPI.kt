@@ -24,6 +24,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.BufferedReader
+import java.util.concurrent.TimeUnit
 
 class ChatCompletionsAPI(
     private val client: OkHttpClient,
@@ -53,7 +54,13 @@ class ChatCompletionsAPI(
         params: TextGenerationParams
     ): Flow<MessageChunk> = flow {
         val request = buildRequest(providerSetting, messages, params, stream = true)
-        val response = client.configureClientWithProxy(providerSetting.proxy).newCall(request).await()
+        val response = client.configureClientWithProxy(providerSetting.proxy)
+            .newBuilder()
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .build()
+            .newCall(request)
+            .await()
+            
         if (!response.isSuccessful) {
             error("Failed to stream text: ${response.code} ${response.body?.string()}")
         }

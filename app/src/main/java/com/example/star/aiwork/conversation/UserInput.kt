@@ -34,6 +34,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -87,6 +88,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -132,7 +134,16 @@ fun UserInputPreview() {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun UserInput(onMessageSent: (String) -> Unit, modifier: Modifier = Modifier, resetScroll: () -> Unit = {}) {
+fun UserInput(
+    onMessageSent: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    resetScroll: () -> Unit = {},
+    onStartRecording: () -> Unit = {},
+    onStopRecording: () -> Unit = {},
+    isRecording: Boolean = false,
+    textFieldValue: TextFieldValue = TextFieldValue(),
+    onTextChanged: (TextFieldValue) -> Unit = {}
+) {
     var currentInputSelector by rememberSaveable { mutableStateOf(InputSelector.NONE) }
     val dismissKeyboard = { currentInputSelector = InputSelector.NONE }
 
@@ -141,18 +152,14 @@ fun UserInput(onMessageSent: (String) -> Unit, modifier: Modifier = Modifier, re
         BackHandler(onBack = dismissKeyboard)
     }
 
-    var textState by rememberSaveable(stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue())
-    }
-
     // Used to decide if the keyboard should be shown
     var textFieldFocusState by remember { mutableStateOf(false) }
 
     Surface(tonalElevation = 2.dp, contentColor = MaterialTheme.colorScheme.secondary) {
         Column(modifier = modifier) {
             UserInputText(
-                textFieldValue = textState,
-                onTextChanged = { textState = it },
+                textFieldValue = textFieldValue,
+                onTextChanged = onTextChanged,
                 // Only show the keyboard if there's no input selector and text field has focus
                 keyboardShown = currentInputSelector == InputSelector.NONE && textFieldFocusState,
                 // Close extended selector if text field receives focus
@@ -164,30 +171,34 @@ fun UserInput(onMessageSent: (String) -> Unit, modifier: Modifier = Modifier, re
                     textFieldFocusState = focused
                 },
                 onMessageSent = {
-                    onMessageSent(textState.text)
+                    onMessageSent(textFieldValue.text)
                     // Reset text field and close keyboard
-                    textState = TextFieldValue()
+                    onTextChanged(TextFieldValue())
                     // Move scroll to bottom
                     resetScroll()
                 },
                 focusState = textFieldFocusState,
+                isRecording = isRecording
             )
             UserInputSelector(
                 onSelectorChange = { currentInputSelector = it },
-                sendMessageEnabled = textState.text.isNotBlank(),
+                sendMessageEnabled = textFieldValue.text.isNotBlank(),
                 onMessageSent = {
-                    onMessageSent(textState.text)
+                    onMessageSent(textFieldValue.text)
                     // Reset text field and close keyboard
-                    textState = TextFieldValue()
+                    onTextChanged(TextFieldValue())
                     // Move scroll to bottom
                     resetScroll()
                     dismissKeyboard()
                 },
                 currentInputSelector = currentInputSelector,
+                onStartRecording = onStartRecording,
+                onStopRecording = onStopRecording,
+                isRecording = isRecording
             )
             SelectorExpanded(
                 onCloseRequested = dismissKeyboard,
-                onTextAdded = { textState = textState.addText(it) },
+                onTextAdded = { onTextChanged(textFieldValue.addText(it)) },
                 currentSelector = currentInputSelector,
             )
         }
@@ -270,6 +281,9 @@ private fun UserInputSelector(
     onMessageSent: () -> Unit,
     currentInputSelector: InputSelector,
     modifier: Modifier = Modifier,
+    onStartRecording: () -> Unit,
+    onStopRecording: () -> Unit,
+    isRecording: Boolean
 ) {
     Row(
         modifier = modifier
@@ -284,30 +298,55 @@ private fun UserInputSelector(
             selected = currentInputSelector == InputSelector.EMOJI,
             description = stringResource(id = R.string.emoji_selector_bt_desc),
         )
-        InputSelectorButton(
-            onClick = { onSelectorChange(InputSelector.DM) },
-            icon = painterResource(id = R.drawable.ic_alternate_email),
-            selected = currentInputSelector == InputSelector.DM,
-            description = stringResource(id = R.string.dm_desc),
-        )
+        
+        // Only keep Emoji and Picture selectors
         InputSelectorButton(
             onClick = { onSelectorChange(InputSelector.PICTURE) },
             icon = painterResource(id = R.drawable.ic_insert_photo),
             selected = currentInputSelector == InputSelector.PICTURE,
             description = stringResource(id = R.string.attach_photo_desc),
         )
-        InputSelectorButton(
-            onClick = { onSelectorChange(InputSelector.MAP) },
-            icon = painterResource(id = R.drawable.ic_place),
-            selected = currentInputSelector == InputSelector.MAP,
-            description = stringResource(id = R.string.map_selector_desc),
-        )
-        InputSelectorButton(
-            onClick = { onSelectorChange(InputSelector.PHONE) },
-            icon = painterResource(id = R.drawable.ic_duo),
-            selected = currentInputSelector == InputSelector.PHONE,
-            description = stringResource(id = R.string.videochat_desc),
-        )
+        
+        // Recording Button
+        val recordingColor = if (isRecording) MaterialTheme.colorScheme.error else LocalContentColor.current
+        
+        // 使用 Box 自定义按钮，去除 IconButton 的默认点击干扰
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(48.dp) // 设置触摸区域大小
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onPress = {
+                            // 1. 手指按下：开始录音
+                            onStartRecording()
+                            try {
+                                // 2. 等待手指抬起
+                                awaitRelease()
+                            } finally {
+                                // 3. 手指抬起或移出区域/事件取消：停止录音
+                                onStopRecording()
+                            }
+                        }
+                    )
+                }
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_mic),
+                contentDescription = "Record Audio",
+                tint = recordingColor,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        
+        if (isRecording) {
+            Text(
+                text = "Recording...",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
 
         val border = if (!sendMessageEnabled) {
             BorderStroke(
@@ -398,9 +437,9 @@ private fun UserInputText(
     onTextFieldFocused: (Boolean) -> Unit,
     onMessageSent: (String) -> Unit,
     focusState: Boolean,
+    isRecording: Boolean
 ) {
     val swipeOffset = remember { mutableStateOf(0f) }
-    var isRecordingMessage by remember { mutableStateOf(false) }
     val a11ylabel = stringResource(id = R.string.textfield_desc)
     Row(
         modifier = Modifier
@@ -409,7 +448,7 @@ private fun UserInputText(
         horizontalArrangement = Arrangement.End,
     ) {
         AnimatedContent(
-            targetState = isRecordingMessage,
+            targetState = isRecording,
             label = "text-field",
             modifier = Modifier
                 .weight(1f)
@@ -434,24 +473,6 @@ private fun UserInputText(
                 }
             }
         }
-        RecordButton(
-            recording = isRecordingMessage,
-            swipeOffset = { swipeOffset.value },
-            onSwipeOffsetChange = { offset -> swipeOffset.value = offset },
-            onStartRecording = {
-                val consumed = !isRecordingMessage
-                isRecordingMessage = true
-                consumed
-            },
-            onFinishRecording = {
-                // handle end of recording
-                isRecordingMessage = false
-            },
-            onCancelRecording = {
-                isRecordingMessage = false
-            },
-            modifier = Modifier.fillMaxHeight(),
-        )
     }
 }
 

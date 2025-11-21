@@ -18,13 +18,19 @@
 
 package com.example.star.aiwork.conversation
 
+import android.Manifest
 import android.content.ClipDescription
+import android.content.pm.PackageManager
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,6 +39,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
@@ -48,19 +55,27 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,14 +93,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LastBaseline
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.example.star.aiwork.FunctionalityNotAvailablePopup
 import com.example.star.aiwork.R
 import com.example.star.aiwork.ai.core.MessageRole
@@ -102,6 +120,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import kotlin.math.roundToInt
 
 /**
  * Entry point for a conversation screen.
@@ -121,11 +140,14 @@ fun ConversationContent(
 ) {
     val authorMe = stringResource(R.string.author_me)
     val timeNow = stringResource(id = R.string.now)
+    val context = LocalContext.current
 
     val scrollState = rememberLazyListState()
     val topBarState = rememberTopAppBarState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(topBarState)
     val scope = rememberCoroutineScope()
+    
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
     var background by remember {
         mutableStateOf(Color.Transparent)
@@ -133,6 +155,13 @@ fun ConversationContent(
 
     var borderStroke by remember {
         mutableStateOf(Color.Transparent)
+    }
+    
+    if (showSettingsDialog) {
+        ModelSettingsDialog(
+            uiState = uiState,
+            onDismissRequest = { showSettingsDialog = false }
+        )
     }
 
     val dragAndDropCallback = remember {
@@ -185,6 +214,47 @@ fun ConversationContent(
     val providerSetting = remember { freeProviders.firstOrNull() }
     val model = remember { providerSetting?.models?.firstOrNull() }
 
+    // Initialize Audio Recorder and WebSocket
+    val audioRecorder = remember { AudioRecorder(context) }
+    val transcriptionListener = remember(scope, uiState) {
+        object : YoudaoWebSocket.TranscriptionListener {
+            override fun onResult(text: String) {
+                scope.launch(Dispatchers.Main) {
+                    val currentText = uiState.textFieldValue.text
+                    val newText = currentText + text
+                    uiState.textFieldValue = uiState.textFieldValue.copy(
+                        text = newText,
+                        selection = TextRange(newText.length)
+                    )
+                }
+            }
+
+            override fun onError(t: Throwable) {
+                android.util.Log.e("Conversation", "ASR Error", t)
+                scope.launch(Dispatchers.Main) {
+                    Toast.makeText(context, "Error: ${t.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+    val youdaoWebSocket = remember { YoudaoWebSocket(transcriptionListener) }
+
+    // Permission Launcher
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (!isGranted) {
+            Toast.makeText(context, "需要录音权限才能使用语音功能", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            youdaoWebSocket.close()
+            audioRecorder.stopRecording()
+        }
+    }
+
     Scaffold(
         topBar = {
             ChannelNameBar(
@@ -192,6 +262,7 @@ fun ConversationContent(
                 channelMembers = uiState.channelMembers,
                 onNavIconPressed = onNavIconPressed,
                 scrollBehavior = scrollBehavior,
+                onSettingsClicked = { showSettingsDialog = true }
             )
         },
         // Exclude ime and navigation bar padding so this can be added by the UserInput composable
@@ -238,23 +309,55 @@ fun ConversationContent(
                                     )
                                 }.takeLast(10) // Simple context window
 
-                                val responseChunk = withContext(Dispatchers.IO) {
-                                    provider.generateText(
+                                // Add initial empty AI message
+                                uiState.addMessage(
+                                    Message("AI", "", timeNow)
+                                )
+
+                                if (uiState.streamResponse) {
+                                    // Call streamText
+                                    provider.streamText(
                                         providerSetting = providerSetting,
                                         messages = history,
-                                        params = TextGenerationParams(model = model)
+                                        params = TextGenerationParams(
+                                            model = model,
+                                            temperature = uiState.temperature,
+                                            maxTokens = uiState.maxTokens
+                                        )
+                                    ).collect { chunk ->
+                                        withContext(Dispatchers.Main) {
+                                            // Update UI with chunk
+                                            val deltaContent = chunk.choices.firstOrNull()?.delta?.toText() ?: ""
+                                            if (deltaContent.isNotEmpty()) {
+                                                uiState.appendToLastMessage(deltaContent)
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Call generateText
+                                    val response = provider.generateText(
+                                        providerSetting = providerSetting,
+                                        messages = history,
+                                        params = TextGenerationParams(
+                                            model = model,
+                                            temperature = uiState.temperature,
+                                            maxTokens = uiState.maxTokens
+                                        )
                                     )
+                                    val content = response.choices.firstOrNull()?.message?.toText() ?: ""
+                                    withContext(Dispatchers.Main) {
+                                        if (content.isNotEmpty()) {
+                                             uiState.appendToLastMessage(content)
+                                        }
+                                    }
                                 }
 
-                                val responseText = responseChunk.choices.firstOrNull()?.message?.toText() ?: "No response from AI"
-
-                                uiState.addMessage(
-                                    Message("AI", responseText, timeNow)
-                                )
                             } catch (e: Exception) {
-                                uiState.addMessage(
-                                    Message("System", "Error: ${e.message}", timeNow)
-                                )
+                                withContext(Dispatchers.Main) {
+                                    uiState.addMessage(
+                                        Message("System", "Error: ${e.message}", timeNow)
+                                    )
+                                }
                                 e.printStackTrace()
                             }
                         }
@@ -272,6 +375,42 @@ fun ConversationContent(
                 // let this element handle the padding so that the elevation is shown behind the
                 // navigation bar
                 modifier = Modifier.navigationBarsPadding().imePadding(),
+                onStartRecording = {
+                    if (ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        uiState.isRecording = true
+                        scope.launch(Dispatchers.IO) {
+                            youdaoWebSocket.connect()
+                            audioRecorder.startRecording(
+                                onAudioData = { data, len ->
+                                    youdaoWebSocket.sendAudio(data, len)
+                                },
+                                onError = { e ->
+                                    android.util.Log.e("Conversation", "AudioRecorder Error", e)
+                                    scope.launch(Dispatchers.Main) {
+                                        uiState.isRecording = false
+                                        Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            )
+                        }
+                    } else {
+                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                onStopRecording = {
+                    if (uiState.isRecording) {
+                        uiState.isRecording = false
+                        audioRecorder.stopRecording()
+                        youdaoWebSocket.close()
+                    }
+                },
+                isRecording = uiState.isRecording,
+                textFieldValue = uiState.textFieldValue,
+                onTextChanged = { uiState.textFieldValue = it }
             )
         }
     }
@@ -285,6 +424,7 @@ fun ChannelNameBar(
     modifier: Modifier = Modifier,
     scrollBehavior: TopAppBarScrollBehavior? = null,
     onNavIconPressed: () -> Unit = { },
+    onSettingsClicked: () -> Unit = { }
 ) {
     var functionalityNotAvailablePopupShown by remember { mutableStateOf(false) }
     if (functionalityNotAvailablePopupShown) {
@@ -310,6 +450,14 @@ fun ChannelNameBar(
             }
         },
         actions = {
+            // Settings icon
+            IconButton(onClick = onSettingsClicked) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    contentDescription = "Settings"
+                )
+            }
             // Search icon
             Icon(
                 painterResource(id = R.drawable.ic_search),
@@ -331,6 +479,125 @@ fun ChannelNameBar(
                 contentDescription = stringResource(id = R.string.info),
             )
         },
+    )
+}
+
+@Composable
+fun ModelSettingsDialog(
+    uiState: ConversationUiState,
+    onDismissRequest: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = {
+            Text(
+                text = "Model Settings",
+                style = MaterialTheme.typography.headlineSmall
+            )
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Temperature Setting
+                Text(
+                    text = "Temperature",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Precise",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = String.format("%.1f", uiState.temperature),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Creative",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Slider(
+                    value = uiState.temperature,
+                    onValueChange = { uiState.temperature = it },
+                    valueRange = 0f..2f,
+                    steps = 19,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Max Tokens Setting
+                Text(
+                    text = "Max Tokens",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                 Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Short",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "${uiState.maxTokens}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Long",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Slider(
+                    value = uiState.maxTokens.toFloat(),
+                    onValueChange = { uiState.maxTokens = it.roundToInt() },
+                    valueRange = 100f..4096f,
+                    steps = 39, // (4096-100)/100 approx 40 steps
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Stream Response Setting
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Stream Response",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Switch(
+                        checked = uiState.streamResponse,
+                        onCheckedChange = { uiState.streamResponse = it }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDismissRequest
+            ) {
+                Text("Done")
+            }
+        },
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 6.dp
     )
 }
 

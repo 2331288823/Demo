@@ -17,15 +17,39 @@
 package com.example.star.aiwork.conversation
 
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
+import androidx.compose.ui.text.input.TextFieldValue
 import com.example.star.aiwork.R
 
-class ConversationUiState(val channelName: String, val channelMembers: Int, initialMessages: List<Message>) {
+class ConversationUiState(
+    val channelName: String, 
+    val channelMembers: Int, 
+    initialMessages: List<Message>
+) {
     private val _messages: MutableList<Message> = initialMessages.toMutableStateList()
     val messages: List<Message> = _messages
 
+    var temperature: Float by mutableFloatStateOf(0.7f)
+    var maxTokens: Int by mutableIntStateOf(2000)
+    var streamResponse: Boolean by mutableStateOf(true)
+
+    var isRecording: Boolean by mutableStateOf(false)
+    var textFieldValue: TextFieldValue by mutableStateOf(TextFieldValue())
+
     fun addMessage(msg: Message) {
         _messages.add(0, msg) // Add to the beginning of the list
+    }
+
+    fun appendToLastMessage(content: String) {
+        if (_messages.isNotEmpty()) {
+            val lastMsg = _messages[0]
+            _messages[0] = lastMsg.copy(content = lastMsg.content + content)
+        }
     }
 }
 
