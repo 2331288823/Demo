@@ -22,12 +22,12 @@
 
     <fragment
         android:id="@+id/nav_home"
-        android:name="com.example.star.aiwork.conversation.ConversationFragment"
+        android:name="com.example.star.aiwork.ui.conversation.ConversationFragment"
         android:label="Conversation" />
 
     <fragment
         android:id="@+id/nav_profile"
-        android:name="com.example.star.aiwork.profile.ProfileFragment"
+        android:name="com.example.star.aiwork.ui.profile.ProfileFragment"
         android:label="Profile">
         <argument
             android:name="userId"
