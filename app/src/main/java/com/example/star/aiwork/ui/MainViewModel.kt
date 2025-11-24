@@ -22,6 +22,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.example.star.aiwork.domain.model.ProviderSetting
 import com.example.star.aiwork.data.UserPreferencesRepository
+import com.example.star.aiwork.data.AgentRepository
+import com.example.star.aiwork.domain.model.Agent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -36,11 +38,14 @@ import kotlinx.coroutines.launch
  * - 侧边栏 (Drawer) 的开闭状态。
  * - 用户配置的 AI 提供商设置 [ProviderSetting]。
  * - 全局 AI 模型参数 (Temperature, Max Tokens, Stream Response)。
+ * - 角色市场/Prompt预设
  *
  * @property userPreferencesRepository 用户偏好仓库，用于持久化数据的读写。
+ * @property agentRepository 角色/Prompt仓库。
  */
 class MainViewModel(
-    private val userPreferencesRepository: UserPreferencesRepository
+    private val userPreferencesRepository: UserPreferencesRepository,
+    private val agentRepository: AgentRepository
 ) : ViewModel() {
 
     // 侧边栏状态流
@@ -87,6 +92,19 @@ class MainViewModel(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = true
         )
+
+    val agents: StateFlow<List<Agent>> = agentRepository.agents
+        .stateIn(
+             scope = viewModelScope,
+             started = SharingStarted.WhileSubscribed(5000),
+             initialValue = emptyList()
+        )
+
+    init {
+        viewModelScope.launch {
+            agentRepository.loadAgents()
+        }
+    }
 
     /**
      * 请求打开侧边栏。
@@ -138,6 +156,24 @@ class MainViewModel(
             userPreferencesRepository.updateStreamResponse(newStreamResponse)
         }
     }
+    
+    fun addAgent(agent: Agent) {
+        viewModelScope.launch {
+            agentRepository.addAgent(agent)
+        }
+    }
+
+    fun updateAgent(agent: Agent) {
+        viewModelScope.launch {
+            agentRepository.updateAgent(agent)
+        }
+    }
+
+    fun removeAgent(agentId: String) {
+        viewModelScope.launch {
+            agentRepository.removeAgent(agentId)
+        }
+    }
 
     /**
      * ViewModel 工厂，用于手动注入依赖项 (UserPreferencesRepository)。
@@ -156,7 +192,8 @@ class MainViewModel(
                 val application = checkNotNull(extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY])
                 
                 return MainViewModel(
-                    UserPreferencesRepository(application)
+                    UserPreferencesRepository(application),
+                    AgentRepository(application)
                 ) as T
             }
         }

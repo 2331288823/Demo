@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.text.input.TextFieldValue
 import com.example.star.aiwork.R
+import com.example.star.aiwork.domain.model.Agent
 
 /**
  * 对话屏幕的 UI 状态容器。
@@ -48,6 +49,13 @@ class ConversationUiState(
     var temperature: Float by mutableFloatStateOf(0.7f)
     var maxTokens: Int by mutableIntStateOf(2000)
     var streamResponse: Boolean by mutableStateOf(true)
+    
+    // Auto-Agent Loop (轻量自动化循环) 状态
+    var isAutoLoopEnabled: Boolean by mutableStateOf(false)
+    var maxLoopCount: Int by mutableIntStateOf(3)
+    
+    // 当前激活的 Agent
+    var activeAgent: Agent? by mutableStateOf(null)
 
     // 录音状态
     var isRecording: Boolean by mutableStateOf(false)

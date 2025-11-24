@@ -357,41 +357,99 @@ fun ConversationContent(
             // 用户输入区域
             UserInput(
                 onMessageSent = { content ->
-                    // 1. 立即将用户消息添加到 UI
-                    uiState.addMessage(
-                        Message(authorMe, content, timeNow),
-                    )
-                    
-                    // 2. 调用 LLM 获取响应
-                    if (providerSetting != null && model != null) {
-                        // 检查提供商是否兼容
-                        if (providerSetting !is ProviderSetting.OpenAI) {
-                             uiState.addMessage(
-                                Message("System", "Currently only OpenAI compatible providers are supported.", timeNow)
-                            )
-                            return@UserInput
+                    // 将发送逻辑封装为挂起函数，支持递归调用
+                    suspend fun processMessage(
+                        inputContent: String, 
+                        isAutoTriggered: Boolean = false,
+                        loopCount: Int = 0
+                    ) {
+                         // 1. 如果是用户手动发送，立即显示消息；自动追问也显示在 UI 上
+                        if (!isAutoTriggered) {
+                            uiState.addMessage(Message(authorMe, inputContent, timeNow))
+                        } else {
+                            // 自动追问消息，可以显示不同的样式或前缀，这里简单处理
+                            uiState.addMessage(Message(authorMe, "[Auto-Loop ${loopCount}] $inputContent", timeNow))
                         }
                         
-                        scope.launch {
+                        // 2. 调用 LLM 获取响应
+                        if (providerSetting != null && model != null) {
+                            // 检查提供商是否兼容
+                            if (providerSetting !is ProviderSetting.OpenAI) {
+                                 uiState.addMessage(
+                                    Message("System", "Currently only OpenAI compatible providers are supported.", timeNow)
+                                )
+                                return
+                            }
+                            
                             try {
-                                // 为 AI 准备对话上下文
-                                val history = uiState.messages.asReversed().map { msg ->
+                                val activeAgent = uiState.activeAgent
+                                
+                                // 构造实际要发送的用户消息（考虑模板）
+                                // 仅对第一条用户原始输入应用模板，自动循环的消息通常是系统生成的指令，不应用模板
+                                val finalUserContent = if (activeAgent != null && !isAutoTriggered) {
+                                    activeAgent.messageTemplate.replace("{{ message }}", inputContent)
+                                } else {
+                                    inputContent
+                                }
+                                
+                                // 收集上下文消息：最近的聊天历史
+                                val contextMessages = uiState.messages.asReversed().map { msg ->
                                     UIMessage(
                                         role = if (msg.author == authorMe) MessageRole.USER else MessageRole.ASSISTANT,
                                         parts = listOf(UIMessagePart.Text(msg.content))
                                     )
-                                }.takeLast(10) // 保持最近 10 条消息的简单上下文窗口
+                                }.takeLast(10).toMutableList() 
+                                
+                                // **组装完整的消息列表 (Prompt Construction)**
+                                val messagesToSend = mutableListOf<UIMessage>()
+
+                                // 1. 系统提示词 (System Prompt)
+                                if (activeAgent != null && activeAgent.systemPrompt.isNotEmpty()) {
+                                    messagesToSend.add(UIMessage(
+                                        role = MessageRole.SYSTEM,
+                                        parts = listOf(UIMessagePart.Text(activeAgent.systemPrompt))
+                                    ))
+                                }
+
+                                // 2. 少样本示例 (Few-shot Examples)
+                                if (activeAgent != null) {
+                                    activeAgent.presetMessages.forEach { preset ->
+                                        messagesToSend.add(UIMessage(
+                                            role = preset.role,
+                                            parts = listOf(UIMessagePart.Text(preset.content))
+                                        ))
+                                    }
+                                }
+                                
+                                // 4. 历史对话 (Conversation History)
+                                messagesToSend.addAll(contextMessages)
+                                
+                                // 5. 当前用户输入 (Current Input)
+                                // 同样的逻辑：如果是新的一轮对话（非从历史中取出），我们需要确保它在列表中
+                                // 如果从历史中取出的最后一条和当前输入重复（或 UI 已经添加了），需要小心处理
+                                // 这里简化处理：直接追加最后一条，因为 contextMessages 是从 uiState.messages 构建的，而 uiState 已经在上面 addMessage 了
+                                // 所以 contextMessages 理论上已经包含了最新一条。
+                                // 但是，对于应用模板的情况，我们需要替换最后一条的内容。
+                                if (messagesToSend.isNotEmpty() && messagesToSend.last().role == MessageRole.USER) {
+                                     messagesToSend.removeAt(messagesToSend.lastIndex)
+                                }
+                                messagesToSend.add(UIMessage(
+                                    role = MessageRole.USER,
+                                    parts = listOf(UIMessagePart.Text(finalUserContent))
+                                ))
 
                                 // 添加初始空 AI 消息占位符
                                 uiState.addMessage(
                                     Message("AI", "", timeNow)
                                 )
 
+                                var fullResponse = ""
+
                                 if (uiState.streamResponse) {
                                     // 调用 streamText 进行流式响应
                                     provider.streamText(
                                         providerSetting = providerSetting,
-                                        messages = history,
+                                        messages = messagesToSend,
                                         params = TextGenerationParams(
                                             model = model,
                                             temperature = uiState.temperature,
@@ -399,10 +457,10 @@ fun ConversationContent(
                                         )
                                     ).collect { chunk ->
                                         withContext(Dispatchers.Main) {
-                                            // 使用每个块更新 UI
                                             val deltaContent = chunk.choices.firstOrNull()?.delta?.toText() ?: ""
                                             if (deltaContent.isNotEmpty()) {
                                                 uiState.appendToLastMessage(deltaContent)
+                                                fullResponse += deltaContent
                                             }
                                         }
                                     }
@@ -410,7 +468,7 @@ fun ConversationContent(
                                     // 调用 generateText 进行非流式响应
                                     val response = provider.generateText(
                                         providerSetting = providerSetting,
-                                        messages = history,
+                                        messages = messagesToSend,
                                         params = TextGenerationParams(
                                             model = model,
                                             temperature = uiState.temperature,
@@ -418,10 +476,48 @@ fun ConversationContent(
                                         )
                                     )
                                     val content = response.choices.firstOrNull()?.message?.toText() ?: ""
+                                    fullResponse = content
                                     withContext(Dispatchers.Main) {
                                         if (content.isNotEmpty()) {
                                              uiState.appendToLastMessage(content)
                                         }
+                                    }
+                                }
+
+                                // --- Auto-Loop Logic with Planner ---
+                                if (uiState.isAutoLoopEnabled && loopCount < uiState.maxLoopCount && fullResponse.isNotBlank()) {
+                                    
+                                    // Step 2: 调用 Planner 模型生成下一步追问
+                                    // 这里我们使用单独的非流式请求，不更新 UI，只为获取指令
+                                    
+                                    val plannerSystemPrompt = """
+                                        You are a task planner agent.
+                                        Analyze the previous AI response and generate a short, specific instruction for the next step to deepen the task or solve remaining issues.
+                                        If the task appears complete or no further meaningful steps are needed, reply with exactly "STOP".
+                                        Output ONLY the instruction or "STOP".
+                                    """.trimIndent()
+                                    
+                                    val plannerMessages = listOf(
+                                        UIMessage(role = MessageRole.SYSTEM, parts = listOf(UIMessagePart.Text(plannerSystemPrompt))),
+                                        UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("Previous Response:\n$fullResponse")))
+                                    )
+
+                                    // 使用相同的 provider/model 进行规划（也可以换一个更快的）
+                                    val plannerResponse = provider.generateText(
+                                        providerSetting = providerSetting,
+                                        messages = plannerMessages,
+                                        params = TextGenerationParams(
+                                            model = model,
+                                            temperature = 0.3f, // 降低温度以获得更确定的指令
+                                            maxTokens = 100
+                                        )
+                                    )
+                                    
+                                    val nextInstruction = plannerResponse.choices.firstOrNull()?.message?.toText()?.trim() ?: "STOP"
+                                    
+                                    if (nextInstruction != "STOP" && nextInstruction.isNotEmpty()) {
+                                        // 递归调用，使用 Planner 生成的指令
+                                        processMessage(nextInstruction, isAutoTriggered = true, loopCount = loopCount + 1)
                                     }
                                 }
 
@@ -433,11 +529,15 @@ fun ConversationContent(
                                 }
                                 e.printStackTrace()
                             }
+                        } else {
+                             uiState.addMessage(
+                                Message("System", "No AI Provider configured.", timeNow)
+                            )
                         }
-                    } else {
-                         uiState.addMessage(
-                            Message("System", "No AI Provider configured.", timeNow)
-                        )
+                    }
+                    
+                    scope.launch {
+                        processMessage(content)
                     }
                 },
                 resetScroll = {
@@ -668,6 +768,57 @@ fun ModelSettingsDialog(
                     Switch(
                         checked = uiState.streamResponse,
                         onCheckedChange = { uiState.streamResponse = it }
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                HorizontalDivider()
+                
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Auto-Loop 开关
+                Text(
+                    text = "Agent Auto-Loop",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Enable Auto-follow up",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Switch(
+                        checked = uiState.isAutoLoopEnabled,
+                        onCheckedChange = { uiState.isAutoLoopEnabled = it }
+                    )
+                }
+
+                // Max Loop Count 滑块
+                if (uiState.isAutoLoopEnabled) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                         Text(
+                            text = "Max Loops: ${uiState.maxLoopCount}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Slider(
+                        value = uiState.maxLoopCount.toFloat(),
+                        onValueChange = { uiState.maxLoopCount = it.roundToInt() },
+                        valueRange = 1f..10f,
+                        steps = 9,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
