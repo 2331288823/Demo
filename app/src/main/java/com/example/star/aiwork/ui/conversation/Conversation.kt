@@ -374,13 +374,64 @@ fun ConversationContent(
                         
                         scope.launch {
                             try {
-                                // 为 AI 准备对话上下文
-                                val history = uiState.messages.asReversed().map { msg ->
+                                val activeAgent = uiState.activeAgent
+                                
+                                // 构造实际要发送的用户消息（考虑模板）
+                                val finalUserContent = if (activeAgent != null) {
+                                    activeAgent.messageTemplate.replace("{{ message }}", content)
+                                } else {
+                                    content
+                                }
+                                
+                                // 收集上下文消息：最近的聊天历史
+                                val contextMessages = uiState.messages.asReversed().map { msg ->
                                     UIMessage(
                                         role = if (msg.author == authorMe) MessageRole.USER else MessageRole.ASSISTANT,
                                         parts = listOf(UIMessagePart.Text(msg.content))
                                     )
-                                }.takeLast(10) // 保持最近 10 条消息的简单上下文窗口
+                                }.takeLast(10).toMutableList() 
+                                
+                                // **组装完整的消息列表 (Prompt Construction)**
+                                val messagesToSend = mutableListOf<UIMessage>()
+
+                                // 1. 系统提示词 (System Prompt)
+                                if (activeAgent != null && activeAgent.systemPrompt.isNotEmpty()) {
+                                    messagesToSend.add(UIMessage(
+                                        role = MessageRole.SYSTEM,
+                                        parts = listOf(UIMessagePart.Text(activeAgent.systemPrompt))
+                                    ))
+                                } else if (uiState.activeAgent == null) {
+                                    // 默认系统提示（可选）
+                                    // messagesToSend.add(UIMessage(role = MessageRole.SYSTEM, parts = listOf(UIMessagePart.Text("You are a helpful assistant."))))
+                                }
+
+                                // 2. 少样本示例 (Few-shot Examples)
+                                if (activeAgent != null) {
+                                    activeAgent.presetMessages.forEach { preset ->
+                                        messagesToSend.add(UIMessage(
+                                            role = preset.role,
+                                            parts = listOf(UIMessagePart.Text(preset.content))
+                                        ))
+                                    }
+                                }
+                                
+                                // 3. 长期记忆 (Memory) - 暂未实现，预留位置
+                                
+                                // 4. 历史对话 (Conversation History)
+                                messagesToSend.addAll(contextMessages)
+                                
+                                // 5. 当前用户输入 (Current Input) - 注意：这里需要替换掉 contextMessages 中最后一条刚刚添加的用户原始输入，改用经过模板处理的
+                                // 但由于上面的逻辑是先 `uiState.addMessage` (这是 UI 显示)，然后 `uiState.messages...takeLast` (这是取历史)
+                                // 这里的 contextMessages 实际上已经包含了 content (用户原始输入)。
+                                // 我们需要移除最后一条（原始输入），替换为 finalUserContent（模板处理后的）。
+                                if (messagesToSend.isNotEmpty() && messagesToSend.last().role == MessageRole.USER) {
+                                     messagesToSend.removeAt(messagesToSend.lastIndex)
+                                }
+                                messagesToSend.add(UIMessage(
+                                    role = MessageRole.USER,
+                                    parts = listOf(UIMessagePart.Text(finalUserContent))
+                                ))
+
 
                                 // 添加初始空 AI 消息占位符
                                 uiState.addMessage(
@@ -391,7 +442,7 @@ fun ConversationContent(
                                     // 调用 streamText 进行流式响应
                                     provider.streamText(
                                         providerSetting = providerSetting,
-                                        messages = history,
+                                        messages = messagesToSend,
                                         params = TextGenerationParams(
                                             model = model,
                                             temperature = uiState.temperature,
@@ -410,7 +461,7 @@ fun ConversationContent(
                                     // 调用 generateText 进行非流式响应
                                     val response = provider.generateText(
                                         providerSetting = providerSetting,
-                                        messages = history,
+                                        messages = messagesToSend,
                                         params = TextGenerationParams(
                                             model = model,
                                             temperature = uiState.temperature,

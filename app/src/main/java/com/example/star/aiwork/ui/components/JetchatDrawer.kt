@@ -39,6 +39,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
@@ -54,6 +56,7 @@ import androidx.compose.ui.Alignment.Companion.CenterStart
 import androidx.compose.ui.Alignment.Companion.CenterVertically
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -63,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import com.example.star.aiwork.R
 import com.example.star.aiwork.data.colleagueProfile
 import com.example.star.aiwork.data.meProfile
+import com.example.star.aiwork.domain.model.Agent
 import com.example.star.aiwork.ui.theme.JetchatTheme
 import com.example.star.aiwork.ui.widget.WidgetReceiver
 
@@ -79,6 +83,8 @@ fun JetchatDrawer(
     drawerState: DrawerState = rememberDrawerState(initialValue = DrawerValue.Closed),
     onChatClicked: (String) -> Unit,
     onProfileClicked: (String) -> Unit,
+    onAgentClicked: (Agent) -> Unit = {},
+    agents: List<Agent> = emptyList(),
     selectedMenu: String = "composers",
     content: @Composable () -> Unit,
 ) {
@@ -90,6 +96,8 @@ fun JetchatDrawer(
                     JetchatDrawerContent(
                         onProfileClicked = onProfileClicked,
                         onChatClicked = onChatClicked,
+                        onAgentClicked = onAgentClicked,
+                        agents = agents,
                         selectedMenu = selectedMenu
                     )
                 }
@@ -106,6 +114,7 @@ fun JetchatDrawer(
  * - 头部 Logo
  * - 聊天列表 (Chats)
  * - 最近联系人 (Recent Profiles)
+ * - 角色市场 (Agent Market)
  * - 设置选项 (如添加 Widget)
  *
  * @param onProfileClicked 当点击个人资料项时的回调。
@@ -113,7 +122,13 @@ fun JetchatDrawer(
  * @param selectedMenu 当前选中的菜单项 ID。
  */
 @Composable
-fun JetchatDrawerContent(onProfileClicked: (String) -> Unit, onChatClicked: (String) -> Unit, selectedMenu: String = "composers") {
+fun JetchatDrawerContent(
+    onProfileClicked: (String) -> Unit, 
+    onChatClicked: (String) -> Unit, 
+    onAgentClicked: (Agent) -> Unit,
+    agents: List<Agent>,
+    selectedMenu: String = "composers"
+) {
     // 使用 windowInsetsTopHeight() 添加一个 Spacer，将抽屉内容向下推
     // 以避开状态栏 (Status Bar) 区域
     Column {
@@ -127,6 +142,17 @@ fun JetchatDrawerContent(onProfileClicked: (String) -> Unit, onChatClicked: (Str
         ChatItem("droidcon-nyc", selectedMenu == "droidcon-nyc") {
             onChatClicked("droidcon-nyc")
         }
+        
+        DividerItem(modifier = Modifier.padding(horizontal = 28.dp))
+        DrawerItemHeader("Agents (Prompts)")
+        agents.forEach { agent ->
+            AgentItem(
+                agent = agent,
+                selected = false, // Can be updated to track selection
+                onAgentClicked = { onAgentClicked(agent) }
+            )
+        }
+
         DividerItem(modifier = Modifier.padding(horizontal = 28.dp))
         DrawerItemHeader("Recent Profiles")
         ProfileItem(
@@ -238,6 +264,59 @@ private fun ChatItem(text: String, selected: Boolean, onChatClicked: () -> Unit)
 }
 
 /**
+ * Agent 列表项组件。
+ */
+@Composable
+private fun AgentItem(agent: Agent, selected: Boolean, onAgentClicked: () -> Unit) {
+    val background = if (selected) {
+        Modifier.background(MaterialTheme.colorScheme.primaryContainer)
+    } else {
+        Modifier
+    }
+    Row(
+        modifier = Modifier
+            .height(56.dp)
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .clip(CircleShape)
+            .then(background)
+            .clickable(onClick = onAgentClicked),
+        verticalAlignment = CenterVertically,
+    ) {
+        val iconTint = if (selected) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
+        Icon(
+            imageVector = Icons.Default.Person, // Using a default person icon for Agents
+            tint = iconTint,
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
+            contentDescription = null,
+        )
+        Column(modifier = Modifier.padding(start = 12.dp)) {
+             Text(
+                text = agent.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
+            )
+            Text(
+                text = agent.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
+       
+    }
+}
+
+
+/**
  * 个人资料列表项组件。
  *
  * @param text 用户名。
@@ -304,7 +383,7 @@ fun DrawerPreview() {
     JetchatTheme {
         Surface {
             Column {
-                JetchatDrawerContent({}, {})
+                JetchatDrawerContent({}, {}, {}, emptyList())
             }
         }
     }
@@ -319,7 +398,7 @@ fun DrawerPreviewDark() {
     JetchatTheme(isDarkTheme = true) {
         Surface {
             Column {
-                JetchatDrawerContent({}, {})
+                JetchatDrawerContent({}, {}, {}, emptyList())
             }
         }
     }

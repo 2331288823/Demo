@@ -40,6 +40,9 @@ import androidx.navigation.fragment.NavHostFragment
 import com.example.star.aiwork.R
 import com.example.star.aiwork.databinding.ContentMainBinding
 import com.example.star.aiwork.ui.components.JetchatDrawer
+import com.example.star.aiwork.ui.conversation.ConversationUiState
+import com.example.star.aiwork.data.exampleUiState
+import com.example.star.aiwork.ui.conversation.Message
 import kotlinx.coroutines.launch
 
 /**
@@ -76,6 +79,9 @@ class NavActivity : AppCompatActivity() {
                     val drawerOpen by viewModel.drawerShouldBeOpened
                         .collectAsStateWithLifecycle()
 
+                    // 收集 Agents 列表
+                    val agents by viewModel.agents.collectAsStateWithLifecycle()
+
                     // 记录当前选中的菜单项
                     var selectedMenu by remember { mutableStateOf("composers") }
 
@@ -99,6 +105,7 @@ class NavActivity : AppCompatActivity() {
                     JetchatDrawer(
                         drawerState = drawerState,
                         selectedMenu = selectedMenu,
+                        agents = agents,
                         onChatClicked = {
                             // 导航回主页聊天界面
                             findNavController().popBackStack(R.id.nav_home, false)
@@ -116,6 +123,26 @@ class NavActivity : AppCompatActivity() {
                             }
                             selectedMenu = it
                         },
+                        onAgentClicked = { agent ->
+                            // 当点击 Agent 时，将其系统提示词作为系统消息添加到当前对话中
+                            // 同时更新 UI 状态中的 activeAgent，以便后续请求带上此 Prompt
+                            
+                            exampleUiState.addMessage(
+                                Message(
+                                    author = "System",
+                                    content = "Applied Agent: ${agent.name}\n${agent.systemPrompt}",
+                                    timestamp = "Now"
+                                )
+                            )
+                            
+                            exampleUiState.activeAgent = agent
+                            
+                            // 关闭抽屉并导航回聊天
+                            findNavController().popBackStack(R.id.nav_home, false)
+                            scope.launch {
+                                drawerState.close()
+                            }
+                        }
                     ) {
                         // 侧滑菜单的主要内容区域：嵌入基于 XML 的 Fragment 导航
                         AndroidViewBinding(ContentMainBinding::inflate)
