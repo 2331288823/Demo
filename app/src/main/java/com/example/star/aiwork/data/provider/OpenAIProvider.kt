@@ -34,6 +34,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
+import com.example.star.aiwork.domain.model.AIException
+import com.example.star.aiwork.infra.util.throwIfFailed
+
 /**
  * OpenAI 提供商实现。
  *
@@ -73,9 +76,10 @@ class OpenAIProvider(
 
             val response =
                 client.configureClientWithProxy(providerSetting.proxy).newCall(request).await()
-            if (!response.isSuccessful) {
-                error("Failed to get models: ${response.code} ${response.body?.string()}")
-            }
+//            if (!response.isSuccessful) {
+//                error("Failed to get models: ${response.code} ${response.body?.string()}")
+//            }
+            response.throwIfFailed()
 
             val bodyStr = response.body?.string()
             if (bodyStr.isNullOrBlank()) return@withContext emptyList()
@@ -117,9 +121,10 @@ class OpenAIProvider(
             .get()
             .build()
         val response = client.configureClientWithProxy(providerSetting.proxy).newCall(request).await()
-        if (!response.isSuccessful) {
-            error("Failed to get balance: ${response.code} ${response.body?.string()}")
-        }
+//        if (!response.isSuccessful) {
+//            error("Failed to get balance: ${response.code} ${response.body?.string()}")
+//        }
+        response.throwIfFailed()
 
         val bodyStr = response.body?.string()
         if (bodyStr.isNullOrBlank()) error("Empty response body for balance")
@@ -224,9 +229,10 @@ class OpenAIProvider(
             .build()
 
         val response = client.configureClientWithProxy(providerSetting.proxy).newCall(request).await()
-        if (!response.isSuccessful) {
-            error("Failed to generate image: ${response.code} ${response.body?.string()}")
-        }
+//        if (!response.isSuccessful) {
+//            error("Failed to generate image: ${response.code} ${response.body?.string()}")
+//        }
+        response.throwIfFailed()
 
         val bodyStr = response.body?.string()
         if (bodyStr.isNullOrBlank()) error("Empty response body for image generation")
