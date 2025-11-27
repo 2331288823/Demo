@@ -28,6 +28,7 @@ import com.example.star.aiwork.ui.ai.UIMessage
 import com.example.star.aiwork.ui.ai.UIMessagePart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.example.star.aiwork.domain.model.AIException
 
 /**
  * Handles the business logic for processing messages in the conversation.
@@ -260,17 +261,42 @@ class ConversationLogic(
                 }
 
             } catch (e: Exception) {
+                val errorMessage = when (e) {
+                    // 1. 鉴权错误：提示检查 Key
+                    is AIException.AuthenticationError -> "鉴权失败：请检查 API Key 是否正确配置。"
+
+                    // 2. 额度不足：提示充值
+                    is AIException.InsufficientQuotaError -> "账户额度不足：请检查服务商余额。"
+
+                    // 3. 频率限制：提示稍后
+                    is AIException.RateLimitError -> "请求太快：触发了服务商的频率限制，请稍候再试。"
+
+                    // 4. 网络错误：提示检查网络
+                    is AIException.NetworkError -> "网络连接失败：请检查网络设置或代理状态。"
+
+                    // 5. 服务器错误：服务商那边挂了
+                    is AIException.ServerError -> "服务商服务器繁忙 (5xx)：请稍后再试。"
+
+                    // 6. 参数错误：通常是代码逻辑问题，或者是 Context 太长
+                    is AIException.InvalidRequestError -> "请求无效：${e.message}"
+
+                    // 7. 其他已知的 AI 异常
+                    is AIException -> "AI 服务异常：${e.message}"
+
+                    // 8. 未知异常 (代码崩溃等)
+                    else -> {
+                        e.printStackTrace()
+                        "发生未知错误：${e.localizedMessage}"
+                    }
+                }
+
                 withContext(Dispatchers.Main) {
+                    // 将友好的错误信息作为 System 消息插入聊天界面
                     uiState.addMessage(
-                        Message("System", "Error: ${e.message}", timeNow)
+                        Message("System", errorMessage, timeNow)
                     )
                 }
-                e.printStackTrace()
             }
-        } else {
-            uiState.addMessage(
-                Message("System", "No AI Provider configured.", timeNow)
-            )
         }
     }
 

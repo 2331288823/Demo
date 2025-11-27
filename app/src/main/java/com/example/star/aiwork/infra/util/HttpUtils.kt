@@ -18,6 +18,10 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import com.example.star.aiwork.domain.model.AIException
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
 
 /**
  * 扩展函数：挂起等待 OkHttp 的 Call 执行完成。
@@ -27,6 +31,9 @@ import kotlin.coroutines.resumeWithException
  */
 suspend fun Call.await(): Response {
     return suspendCancellableCoroutine { continuation ->
+        continuation.invokeOnCancellation {
+            cancel()
+        }
         enqueue(object : Callback {
             override fun onResponse(call: Call, response: Response) {
                 continuation.resume(response)
@@ -38,14 +45,14 @@ suspend fun Call.await(): Response {
                 }
             }
         })
-
-        continuation.invokeOnCancellation {
-            try {
-                cancel()
-            } catch (ex: Throwable) {
-                // Ignore cancel exception
-            }
-        }
+//
+//        continuation.invokeOnCancellation {
+//            try {
+//                cancel()
+//            } catch (ex: Throwable) {
+//                // Ignore cancel exception
+//            }
+//        }
     }
 }
 
@@ -124,3 +131,42 @@ val JsonElement.jsonPrimitiveOrNull
     } catch (e: IllegalArgumentException) {
         null
     }
+
+/**
+ * 检查响应是否成功，如果不成功则抛出对应的 AIException。
+ */
+fun Response.throwIfFailed() {
+    if (isSuccessful) return
+
+    // 读取错误信息，注意：body?.string() 只能读一次，读完后流就关闭了
+    // 所以这里读取后，后续的代码就不能再读 body 了
+    val bodyStr = body?.string() ?: ""
+
+    // 尝试解析 OpenAI 格式的错误信息: { "error": { "message": "..." } }
+    val errorMsg = try {
+        if (bodyStr.isNotBlank()) {
+            val jsonElement = json.parseToJsonElement(bodyStr)
+            jsonElement.jsonObject["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
+        } else {
+            null
+        }
+    } catch (e: Exception) {
+        null
+    } ?: bodyStr // 如果解析失败，直接使用原始 body 字符串
+
+    // 根据状态码抛出异常
+    when (code) {
+        401 -> throw AIException.AuthenticationError("认证失败: $errorMsg")
+        403 -> throw AIException.AuthenticationError("权限不足 (403): $errorMsg")
+        404 -> throw AIException.InvalidRequestError("请求路径不存在 (404): $errorMsg")
+        429 -> {
+            if (errorMsg.contains("quota", true) || errorMsg.contains("billing", true)) {
+                throw AIException.InsufficientQuotaError()
+            }
+            throw AIException.RateLimitError()
+        }
+        in 500..599 -> throw AIException.ServerError("服务器错误 ($code): $errorMsg")
+        400 -> throw AIException.InvalidRequestError("请求参数错误: $errorMsg")
+        else -> throw AIException.UnknownError("HTTP $code: $errorMsg")
+    }
+}

@@ -35,6 +35,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import android.widget.Toast
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 /**
  * 主 ViewModel，负责在屏幕之间共享数据和通信。
@@ -54,6 +59,10 @@ class MainViewModel(
     private val agentRepository: AgentRepository,
     val ragService: LocalRAGService
 ) : ViewModel() {
+
+    // 定义用于发送 Toast 消息的事件流
+    private val _toastEvent = MutableSharedFlow<String>()
+    val toastEvent = _toastEvent.asSharedFlow()
 
     // 侧边栏状态流
     private val _drawerShouldBeOpened = MutableStateFlow(false)
@@ -212,9 +221,10 @@ class MainViewModel(
         }
     }
 
+    // 其他也可以加上错误提示
     fun indexPdf(uri: Uri) {
-        viewModelScope.launch {
-             ragService.indexPdf(uri)
+        launchWithToast(successMsg = "PDF 解析成功", errorPrefix = "PDF 解析失败") {
+            ragService.indexPdf(uri)
         }
     }
     
@@ -254,6 +264,32 @@ class MainViewModel(
                     AgentRepository(application),
                     ragService
                 ) as T
+            }
+        }
+    }
+
+    /**
+     * 封装通用的协程启动逻辑，包含错误捕获和 Toast 提示。
+     * * @param successMsg 任务成功后要显示的 Toast 内容 (可选)
+     * @param errorPrefix 任务失败时错误信息的前缀 (默认为"操作失败")
+     * @param block 要执行的挂起函数
+     */
+    private fun launchWithToast(
+        successMsg: String? = null,
+        errorPrefix: String = "操作失败",
+        block: suspend () -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                block()
+                // 如果提供了成功消息，就发送
+                if (successMsg != null) {
+                    _toastEvent.emit(successMsg)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                // 发送错误消息
+                _toastEvent.emit("$errorPrefix: ${e.message}")
             }
         }
     }

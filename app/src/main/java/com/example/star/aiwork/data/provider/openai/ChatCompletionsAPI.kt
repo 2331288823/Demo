@@ -24,6 +24,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.BufferedReader
 import java.util.concurrent.TimeUnit
 
+import com.example.star.aiwork.domain.model.AIException
+import com.example.star.aiwork.infra.util.throwIfFailed
+
 /**
  * OpenAI Chat Completions API 的具体实现。
  *
@@ -55,6 +58,10 @@ class ChatCompletionsAPI(
     ): MessageChunk {
         val request = buildRequest(providerSetting, messages, params, stream = false)
         val response = client.configureClientWithProxy(providerSetting.proxy).newCall(request).await()
+
+        // throwIfFailed 内部已经读取了 body string 用于报错
+        response.throwIfFailed()
+
         if (!response.isSuccessful) {
             error("Failed to generate text: ${response.code} ${response.body?.string()}")
         }
@@ -93,9 +100,10 @@ class ChatCompletionsAPI(
             .newCall(request)
             .await()
             
-        if (!response.isSuccessful) {
-            error("Failed to stream text: ${response.code} ${response.body?.string()}")
-        }
+//        if (!response.isSuccessful) {
+//            error("Failed to stream text: ${response.code} ${response.body?.string()}")
+//        }
+        response.throwIfFailed()
 
         // 3. 获取原始字节流并包装为字符缓冲流，方便按行读取 SSE 数据
         val source = response.body?.source() ?: error("Empty response body")
