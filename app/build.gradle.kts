@@ -23,6 +23,9 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+configurations.all {
+    exclude(group = "com.intellij", module = "annotations")
+}
 android {
     compileSdk = libs.versions.compileSdk.get().toInt()
     namespace = "com.example.star.aiwork"
@@ -87,6 +90,7 @@ android {
 }
 
 dependencies {
+    implementation(libs.room.compiler)
     val composeBom = platform(libs.androidx.compose.bom)
     implementation(composeBom)
     androidTestImplementation(composeBom)
@@ -138,7 +142,6 @@ dependencies {
 
     // Kotlin DateTime
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
-    
     // DataStore
     implementation(libs.androidx.datastore.preferences)
 
