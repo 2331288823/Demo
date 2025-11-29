@@ -40,7 +40,7 @@ class SessionLocalDataSourceImpl(context: Context) : SessionLocalDataSource {
         val db = dbHelper.readableDatabase
         val cursor = db.query(
             "sessions",
-            null,
+            null, // For getSession, we still need all columns to get the full entity
             "id = ?",
             arrayOf(id),
             null,
@@ -67,7 +67,7 @@ class SessionLocalDataSourceImpl(context: Context) : SessionLocalDataSource {
         val db = dbHelper.readableDatabase
         val cursor = db.query(
             "sessions",
-            null,
+            arrayOf("id", "name", "createdAt", "updatedAt", "pinned", "archived"), // Optimized to select only necessary columns
             null,
             null,
             null,

@@ -18,6 +18,7 @@ import com.example.star.aiwork.domain.model.MessageRole
 import com.example.star.aiwork.domain.model.MessageType
 import com.example.star.aiwork.domain.model.SessionEntity
 import com.example.star.aiwork.domain.model.SessionMetadata
+import com.example.star.aiwork.domain.model.SessionTitle
 import com.example.star.aiwork.domain.usecase.draft.GetDraftUseCase
 import com.example.star.aiwork.domain.usecase.draft.UpdateDraftUseCase
 import com.example.star.aiwork.domain.usecase.message.RollbackMessageUseCase
@@ -30,6 +31,8 @@ import java.util.*
 
 class ChatViewModel(
     private val getSessionListUseCase: GetSessionListUseCase,
+    private val getSessionTitlesUseCase: GetSessionTitlesUseCase, // ADDED
+    private val getSessionByIdUseCase: GetSessionByIdUseCase,   // ADDED
     private val createSessionUseCase: CreateSessionUseCase,
     private val renameSessionUseCase: RenameSessionUseCase,
     private val deleteSessionUseCase: DeleteSessionUseCase,
@@ -45,6 +48,10 @@ class ChatViewModel(
     private val _sessions = MutableStateFlow<List<SessionEntity>>(emptyList())
     val sessions: StateFlow<List<SessionEntity>> = _sessions.asStateFlow()
 
+    // ADDED: New StateFlow for lightweight session titles
+    private val _sessionTitles = MutableStateFlow<List<SessionTitle>>(emptyList())
+    val sessionTitles: StateFlow<List<SessionTitle>> = _sessionTitles.asStateFlow()
+
     private val _currentSession = MutableStateFlow<SessionEntity?>(null)
     val currentSession: StateFlow<SessionEntity?> = _currentSession.asStateFlow()
 
@@ -56,6 +63,7 @@ class ChatViewModel(
 
     init {
         loadSessions()
+        loadSessionTitles() // ADDED
     }
 
     fun loadSessions() {
@@ -65,6 +73,15 @@ class ChatViewModel(
                 if (_currentSession.value == null) {
                     _currentSession.value = list.firstOrNull()
                 }
+            }
+        }
+    }
+
+    // ADDED: New method to load titles for the sidebar UI
+    fun loadSessionTitles() {
+        viewModelScope.launch {
+            getSessionTitlesUseCase().collect { titles ->
+                _sessionTitles.value = titles
             }
         }
     }
@@ -82,6 +99,8 @@ class ChatViewModel(
             )
             createSessionUseCase(session)
             _currentSession.value = session
+            loadSessions()      // Ensure both lists are updated
+            loadSessionTitles() // Ensure both lists are updated
         }
     }
 
@@ -103,6 +122,7 @@ class ChatViewModel(
             }
             // 刷新会话列表
             loadSessions()
+            loadSessionTitles() // ADDED
         }
     }
 
@@ -113,6 +133,8 @@ class ChatViewModel(
             _currentSession.value = null
             _messages.value = emptyList()
             _draft.value = null
+            loadSessions()      // Ensure both lists are updated
+            loadSessionTitles() // Ensure both lists are updated
         }
     }
 
@@ -128,6 +150,7 @@ class ChatViewModel(
             }
             // 刷新会话列表
             loadSessions()
+            loadSessionTitles() // ADDED
         }
     }
 
@@ -142,6 +165,7 @@ class ChatViewModel(
             pinSessionUseCase(sessionId, pinned)
             // 刷新会话列表
             loadSessions()
+            loadSessionTitles() // ADDED
         }
     }
 
@@ -150,6 +174,7 @@ class ChatViewModel(
             archiveSessionUseCase(sessionId, archived)
             // 刷新会话列表
             loadSessions()
+            loadSessionTitles() // ADDED
         }
     }
 
@@ -215,6 +240,18 @@ class ChatViewModel(
         loadDraft()
     }
 
+    // ADDED: New method to select a session from a lightweight title object
+    fun selectSession(sessionTitle: SessionTitle) {
+        viewModelScope.launch {
+            val fullSession = getSessionByIdUseCase(sessionTitle.id)
+            if (fullSession != null) {
+                _currentSession.value = fullSession
+                loadMessages(fullSession.id)
+                loadDraft()
+            }
+        }
+    }
+
     companion object {
         val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -233,6 +270,8 @@ class ChatViewModel(
 
                 // Create UseCases
                 val getSessionListUseCase = GetSessionListUseCase(sessionRepository)
+                val getSessionTitlesUseCase = GetSessionTitlesUseCase(getSessionListUseCase) // ADDED
+                val getSessionByIdUseCase = GetSessionByIdUseCase(sessionRepository)       // ADDED
                 val createSessionUseCase = CreateSessionUseCase(sessionRepository)
                 val renameSessionUseCase = RenameSessionUseCase(sessionRepository)
                 val deleteSessionUseCase = DeleteSessionUseCase(sessionRepository, messageRepository, draftRepository)
@@ -248,6 +287,8 @@ class ChatViewModel(
 
                 return ChatViewModel(
                     getSessionListUseCase,
+                    getSessionTitlesUseCase, // ADDED
+                    getSessionByIdUseCase,   // ADDED
                     createSessionUseCase,
                     renameSessionUseCase,
                     deleteSessionUseCase,
