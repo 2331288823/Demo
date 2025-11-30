@@ -21,6 +21,7 @@ package com.example.star.aiwork.ui.conversation
 import android.Manifest
 import android.content.ClipDescription
 import android.content.pm.PackageManager
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -37,6 +38,20 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.paddingFrom
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
@@ -59,9 +74,20 @@ import androidx.compose.ui.draganddrop.mimeTypes
 import androidx.compose.ui.draganddrop.toAndroidDragEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LastBaseline
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -80,6 +106,14 @@ import com.example.star.aiwork.infra.network.SseClient
 import com.example.star.aiwork.ui.theme.JetchatTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import kotlin.math.roundToInt
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.wrapContentSize
+
+
 import java.util.UUID
 
 /**
@@ -131,10 +165,10 @@ fun ConversationContent(
     val topBarState = rememberTopAppBarState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(topBarState)
     val scope = rememberCoroutineScope()
-    
+
     // 显示模型设置对话框的状态
     var showSettingsDialog by remember { mutableStateOf(false) }
-    
+
     // 将从 ViewModel 传递的参数与 UiState 同步
     // 这确保了 UI 反映持久化的设置
     LaunchedEffect(temperature, maxTokens, streamResponse) {
@@ -151,15 +185,15 @@ fun ConversationContent(
     var borderStroke by remember {
         mutableStateOf(Color.Transparent)
     }
-    
+
     // 如果请求，显示模型设置对话框
     if (showSettingsDialog) {
         ModelSettingsDialog(
             uiState = uiState,
-            onDismissRequest = { 
+            onDismissRequest = {
                 // 当对话框关闭时保存设置
                 onUpdateSettings(uiState.temperature, uiState.maxTokens, uiState.streamResponse)
-                showSettingsDialog = false 
+                showSettingsDialog = false
             }
         )
     }
@@ -209,8 +243,8 @@ fun ConversationContent(
     val providerSetting = remember(providerSettings, activeProviderId) { 
         providerSettings.find { it.id == activeProviderId } ?: providerSettings.firstOrNull() 
     }
-    val model = remember(providerSetting, activeModelId) { 
-        providerSetting?.models?.find { it.modelId == activeModelId } ?: providerSetting?.models?.firstOrNull() 
+    val model = remember(providerSetting, activeModelId) {
+        providerSetting?.models?.find { it.modelId == activeModelId } ?: providerSetting?.models?.firstOrNull()
     }
 
     // 使用当前会话 ID，如果没有则生成一个临时 ID（向后兼容）
@@ -269,14 +303,14 @@ fun ConversationContent(
 
     // 初始化用于语音转文本的音频录制器和 WebSocket
     val audioRecorder = remember { AudioRecorder(context) }
-    
+
     // 跟踪挂起的部分文本长度，以便在实时转录期间正确替换它
     var lastPartialLength by remember { mutableIntStateOf(0) }
-    
+
     // 处理 ASR 结果的转录监听器
     val transcriptionListener = remember(scope, uiState) {
         object : YoudaoWebSocket.TranscriptionListener {
-            override fun onResult(text: String, isFinal: Boolean) {
+            override fun onTranscriptionReceived(text: String) {  // ✅ 修正方法名
                 scope.launch(Dispatchers.Main) {
                     val currentText = uiState.textFieldValue.text
                     
@@ -290,24 +324,25 @@ fun ConversationContent(
                     val newText = safeCurrentText + text
                     
                     uiState.textFieldValue = uiState.textFieldValue.copy(
-                        text = newText,
-                        selection = TextRange(newText.length)
+                        text = text,
+                        selection = TextRange(text.length)
                     )
-                    
-                    // 更新 lastPartialLength：如果是最终结果，重置为 0，否则存储当前长度
-                    lastPartialLength = if (isFinal) 0 else text.length
                 }
             }
 
-            override fun onError(t: Throwable) {
-                android.util.Log.e("Conversation", "ASR Error", t)
+            override fun onError(error: String) {  // ✅ 修正参数类型
+                Log.e("VoiceInput", "ASR Error: $error")
                 scope.launch(Dispatchers.Main) {
-                    Toast.makeText(context, "Error: ${t.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "识别错误: $error", Toast.LENGTH_LONG).show()
                 }
             }
         }
     }
-    val youdaoWebSocket = remember { YoudaoWebSocket(transcriptionListener) }
+    val youdaoWebSocket = remember {
+        YoudaoWebSocket().apply {
+            listener = transcriptionListener
+        }
+    }
 
     // 音频录制的权限启动器
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -326,6 +361,7 @@ fun ConversationContent(
         onDispose {
             youdaoWebSocket.close()
             audioRecorder.stopRecording()
+            audioRecorder.cleanup()
         }
     }
 
@@ -365,8 +401,8 @@ fun ConversationContent(
                 modifier = Modifier.weight(1f),
                 scrollState = scrollState,
             )
-            
-            // 用户输入区域
+
+            // 用户输入区域//f2
             UserInput(
                 selectedImageUri = uiState.selectedImageUri,
                 onImageSelected = { uri -> uiState.selectedImageUri = uri },
@@ -399,15 +435,18 @@ fun ConversationContent(
                         scope.launch(Dispatchers.IO) {
                             youdaoWebSocket.connect()
                             audioRecorder.startRecording(
-                                onAudioData = { data, len ->
-                                    youdaoWebSocket.sendAudio(data, len)
+                                onAudioData = { data, size ->
+                                    // ✅ 添加这一行日志
+                                    Log.d("VoiceInput", "📤 Sending $size bytes to Youdao WebSocket")
+
+                                    youdaoWebSocket.sendAudio(data, size)
                                 },
-                                onError = { e ->
-                                    android.util.Log.e("Conversation", "AudioRecorder Error", e)
-                                    scope.launch(Dispatchers.Main) {
-                                        uiState.isRecording = false
-                                        Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                onError = { error ->
+                                    Log.e("VoiceInput", "❌ Recording error: ${error.message}")
+                                    scope.launch {
+                                        Toast.makeText(context, "录音失败: ${error.message}", Toast.LENGTH_SHORT).show()
                                     }
+                                    uiState.isRecording = false  // ✅ 修正
                                 }
                             )
                         }

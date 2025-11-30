@@ -21,9 +21,12 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -38,57 +41,105 @@ import kotlinx.coroutines.launch
 class AudioRecorder(private val context: Context) {
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
+
+    // 创建一个持久的作用域
+    private val recordingScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    private val sampleRate = 16000
+    private val channelConfig = AudioFormat.CHANNEL_IN_MONO
+    private val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+
     private val bufferSize = AudioRecord.getMinBufferSize(
-        16000,
-        AudioFormat.CHANNEL_IN_MONO,
-        AudioFormat.ENCODING_PCM_16BIT
-    )
+        sampleRate,
+        channelConfig,
+        audioFormat
+    ).coerceAtLeast(4096) // 确保缓冲区至少为 4KB
 
     /**
      * 开始录音。
      *
-     * @param onAudioData 音频数据回调，当有新的音频数据块可用时触发。
-     * @param onError 错误回调，当发生异常时触发。
+     * @param onAudioData 音频数据回调,当有新的音频数据块可用时触发。
+     * @param onError 错误回调,当发生异常时触发。
      */
     @SuppressLint("MissingPermission")
     fun startRecording(
         onAudioData: (ByteArray, Int) -> Unit,
         onError: (Exception) -> Unit
     ) {
-        if (recordingJob != null) return
+        // 防止重复启动
+        if (recordingJob?.isActive == true) {
+            Log.w("AudioRecorder", "Recording already in progress")
+            return
+        }
 
         try {
+            Log.d("AudioRecorder", "Initializing AudioRecord with buffer size: $bufferSize")
+
             // 初始化 AudioRecord
             audioRecord = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
-                16000, // 采样率 16kHz
-                AudioFormat.CHANNEL_IN_MONO, // 单声道
-                AudioFormat.ENCODING_PCM_16BIT, // 16位 PCM
+                sampleRate,
+                channelConfig,
+                audioFormat,
                 bufferSize
             )
 
+            // 检查初始化状态
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                onError(Exception("AudioRecord init failed"))
+                val error = Exception("AudioRecord initialization failed. State: ${audioRecord?.state}")
+                Log.e("AudioRecorder", error.message ?: "Unknown error")
+                onError(error)
                 return
             }
 
+            // 开始录音
             audioRecord?.startRecording()
+            Log.d("AudioRecorder", "AudioRecord started recording")
 
-            // 在 IO 线程中循环读取音频数据
-            recordingJob = CoroutineScope(Dispatchers.IO).launch {
+            // 在持久作用域中启动录音循环
+            recordingJob = recordingScope.launch {
                 val buffer = ByteArray(bufferSize)
-                while (isActive) {
-                    val read = audioRecord?.read(buffer, 0, bufferSize) ?: 0
-                    if (read > 0) {
-                        onAudioData(buffer, read)
-                    } else if (read < 0) {
-                         // read < 0 表示错误代码
-                         onError(Exception("AudioRecord read error: $read"))
-                         break
+                var totalBytesRead = 0
+
+                Log.d("AudioRecorder", "Recording loop started")
+
+                while (isActive && audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    val bytesRead = audioRecord?.read(buffer, 0, bufferSize) ?: 0
+
+                    when {
+                        bytesRead > 0 -> {
+                            totalBytesRead += bytesRead
+                            onAudioData(buffer.copyOf(bytesRead), bytesRead)
+
+                            // 每秒记录一次日志 (16000 采样率 * 2 字节 = 32000 字节/秒)
+                            if (totalBytesRead % 32000 < bufferSize) {
+                                Log.d("AudioRecorder", "Read $bytesRead bytes (total: $totalBytesRead)")
+                            }
+                        }
+                        bytesRead == 0 -> {
+                            Log.w("AudioRecorder", "AudioRecord read 0 bytes")
+                        }
+                        else -> {
+                            // bytesRead < 0 表示错误
+                            val errorMsg = when (bytesRead) {
+                                AudioRecord.ERROR_INVALID_OPERATION -> "ERROR_INVALID_OPERATION"
+                                AudioRecord.ERROR_BAD_VALUE -> "ERROR_BAD_VALUE"
+                                AudioRecord.ERROR_DEAD_OBJECT -> "ERROR_DEAD_OBJECT"
+                                AudioRecord.ERROR -> "ERROR"
+                                else -> "Unknown error code: $bytesRead"
+                            }
+                            Log.e("AudioRecorder", "AudioRecord read error: $errorMsg")
+                            onError(Exception("AudioRecord read error: $errorMsg"))
+                            break
+                        }
                     }
                 }
+
+                Log.d("AudioRecorder", "Recording loop ended. Total bytes: $totalBytesRead")
             }
+
         } catch (e: Exception) {
+            Log.e("AudioRecorder", "Failed to start recording", e)
             onError(e)
         }
     }
@@ -98,14 +149,36 @@ class AudioRecorder(private val context: Context) {
      * 释放 AudioRecord 资源并取消协程。
      */
     fun stopRecording() {
+        Log.d("AudioRecorder", "Stopping recording...")
+
+        // 取消录音任务
         recordingJob?.cancel()
         recordingJob = null
+
+        // 停止并释放 AudioRecord
         try {
-            audioRecord?.stop()
-            audioRecord?.release()
+            audioRecord?.apply {
+                if (recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    stop()
+                    Log.d("AudioRecorder", "AudioRecord stopped")
+                }
+                release()
+                Log.d("AudioRecorder", "AudioRecord released")
+            }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("AudioRecorder", "Error stopping AudioRecord", e)
         }
+
         audioRecord = null
+    }
+
+    /**
+     * 清理资源
+     * 在不再需要 AudioRecorder 时调用
+     */
+    fun cleanup() {
+        stopRecording()
+        recordingScope.cancel()
+        Log.d("AudioRecorder", "AudioRecorder cleanup completed")
     }
 }

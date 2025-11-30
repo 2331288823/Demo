@@ -53,19 +53,22 @@ class ConversationUiState(
     var temperature: Float by mutableFloatStateOf(0.7f)
     var maxTokens: Int by mutableIntStateOf(2000)
     var streamResponse: Boolean by mutableStateOf(true)
-    
+
     // Auto-Agent Loop (轻量自动化循环) 状态
     var isAutoLoopEnabled: Boolean by mutableStateOf(false)
     var maxLoopCount: Int by mutableIntStateOf(3)
-    
+
     // 当前激活的 Agent
     var activeAgent: Agent? by mutableStateOf(null)
 
     // 录音状态
     var isRecording: Boolean by mutableStateOf(false)
+    var isTranscribing: Boolean by mutableStateOf(false) // 新增：是否正在转换文字
+    var pendingTranscription: String by mutableStateOf("") // 新增：暂存转写文本（录音时实时显示）
+
     // 输入框文本状态
     var textFieldValue: TextFieldValue by mutableStateOf(TextFieldValue())
-    
+
     // 暂存选中的图片 URI
     var selectedImageUri: Uri? by mutableStateOf(null)
 
@@ -93,7 +96,20 @@ class ConversationUiState(
     fun appendToLastMessage(content: String) {
         if (_messages.isNotEmpty()) {
             val lastMsg = _messages[0]
-            _messages[0] = lastMsg.copy(content = lastMsg.content + content)
+            _messages[0] = lastMsg.copy(
+                content = lastMsg.content + content,
+                isLoading = false  // ✅ 有内容后，取消加载状态
+            )
+        }
+    }
+
+    /**
+     * ✅ 新增：更新最后一条消息的加载状态
+     */
+    fun updateLastMessageLoadingState(isLoading: Boolean) {
+        if (_messages.isNotEmpty()) {
+            val lastMsg = _messages[0]
+            _messages[0] = lastMsg.copy(isLoading = isLoading)
         }
     }
 }
@@ -119,4 +135,5 @@ data class Message(
     val image: Int? = null,
     val imageUrl: String? = null,
     val authorImage: Int = if (author == "me") R.drawable.ali else R.drawable.someone_else,
+    val isLoading: Boolean = false  // ✅ 新增：标记是否正在加载
 )

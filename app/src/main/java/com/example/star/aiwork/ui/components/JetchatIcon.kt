@@ -48,17 +48,10 @@ fun JetchatIcon(contentDescription: String?, modifier: Modifier = Modifier) {
     } else {
         Modifier
     }
-    // 使用 Box 将两个图标层叠在一起
+    // 使用 Box
     Box(modifier = modifier.then(semantics)) {
-        // 背景层图标
         Icon(
-            painter = painterResource(id = R.drawable.ic_jetchat_back),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primaryContainer,
-        )
-        // 前景层图标
-        Icon(
-            painter = painterResource(id = R.drawable.ic_jetchat_front),
+            painter = painterResource(id = R.drawable.ic_jetchat),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
         )
