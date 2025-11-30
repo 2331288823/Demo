@@ -16,8 +16,11 @@
 
 package com.example.star.aiwork.ui
 
+import android.net.Uri
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -39,8 +42,11 @@ import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
 import com.example.star.aiwork.R
 import com.example.star.aiwork.databinding.ContentMainBinding
+import com.example.star.aiwork.domain.model.SessionEntity
+import com.example.star.aiwork.ui.components.DeleteSessionDialog
 import com.example.star.aiwork.ui.components.JetchatDrawer
-import com.example.star.aiwork.ui.conversation.ConversationUiState
+import com.example.star.aiwork.ui.components.RenameSessionDialog
+import com.example.star.aiwork.ui.conversation.ChatViewModel
 import com.example.star.aiwork.data.exampleUiState
 import com.example.star.aiwork.ui.conversation.Message
 import kotlinx.coroutines.launch
@@ -57,8 +63,8 @@ import kotlinx.coroutines.launch
  * 这种结构展示了如何在一个应用中同时使用 Jetpack Compose 和传统的 View 系统。
  */
 class NavActivity : AppCompatActivity() {
-    // 懒加载 ViewModel，使用自定义 Factory
-    private val viewModel: MainViewModel by viewModels { MainViewModel.Factory }
+    private val mainViewModel: MainViewModel by viewModels { MainViewModel.Factory }
+    private val chatViewModel: ChatViewModel by viewModels { ChatViewModel.Factory }
 
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,15 +81,29 @@ class NavActivity : AppCompatActivity() {
                 setContent {
                     // 记住侧滑菜单的状态 (打开/关闭)
                     val drawerState = rememberDrawerState(initialValue = Closed)
-                    // 从 ViewModel 收集是否应该打开菜单的状态
-                    val drawerOpen by viewModel.drawerShouldBeOpened
-                        .collectAsStateWithLifecycle()
+                    val drawerOpen by mainViewModel.drawerShouldBeOpened.collectAsStateWithLifecycle()
 
-                    // 收集 Agents 列表
-                    val agents by viewModel.agents.collectAsStateWithLifecycle()
+                    val agents by mainViewModel.agents.collectAsStateWithLifecycle()
+                    val sessions by chatViewModel.sessions.collectAsStateWithLifecycle()
+                    val currentSession by chatViewModel.currentSession.collectAsStateWithLifecycle()
 
                     // 记录当前选中的菜单项
                     var selectedMenu by remember { mutableStateOf("composers") }
+                    
+                    // 重命名对话框状态
+                    var sessionToRename by remember { mutableStateOf<SessionEntity?>(null) }
+                    
+                    // 删除确认对话框状态
+                    var sessionToDelete by remember { mutableStateOf<SessionEntity?>(null) }
+
+                    // PDF 选择器
+                    val pdfLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.GetContent()
+                    ) { uri: Uri? ->
+                        if (uri != null) {
+                            //MainViewModel.indexPdf(uri)
+                        }
+                    }
 
                     // 监听 ViewModel 中的打开菜单请求
                     if (drawerOpen) {
@@ -91,9 +111,10 @@ class NavActivity : AppCompatActivity() {
                         LaunchedEffect(Unit) {
                             // 使用 try-finally 包装以处理打开菜单时的中断情况
                             try {
+                                // sessions Flow 会自动更新，因为 observeSessions() 观察数据库变化
                                 drawerState.open()
                             } finally {
-                                viewModel.resetOpenDrawerAction()
+                                mainViewModel.resetOpenDrawerAction()
                             }
                         }
                     }
@@ -104,24 +125,25 @@ class NavActivity : AppCompatActivity() {
                     // 使用 Compose 实现的侧滑菜单布局
                     JetchatDrawer(
                         drawerState = drawerState,
-                        selectedMenu = selectedMenu,
+                        selectedMenu = currentSession?.id ?: "",
                         agents = agents,
-                        onChatClicked = {
-                            // 导航回主页聊天界面
+                        sessions = sessions,
+                        onChatClicked = { sessionId ->
+                            val session = sessions.find { it.id == sessionId }
+                            if (session != null) {
+                                chatViewModel.selectSession(session)
+                            }
                             findNavController().popBackStack(R.id.nav_home, false)
                             scope.launch {
                                 drawerState.close()
                             }
-                            selectedMenu = it
                         },
-                        onProfileClicked = {
-                            // 导航到个人资料界面，并传递 userId
-                            val bundle = bundleOf("userId" to it)
+                        onProfileClicked = { userId ->
+                            val bundle = bundleOf("userId" to userId)
                             findNavController().navigate(R.id.nav_profile, bundle)
                             scope.launch {
                                 drawerState.close()
                             }
-                            selectedMenu = it
                         },
                         onAgentClicked = { agent ->
                             // 当点击 Agent 时，将其系统提示词作为系统消息添加到当前对话中
@@ -142,10 +164,93 @@ class NavActivity : AppCompatActivity() {
                             scope.launch {
                                 drawerState.close()
                             }
+                        },
+                        onImportPdfClicked = {
+                            pdfLauncher.launch("application/pdf")
+                            scope.launch {
+                                drawerState.close()
+                            }
+                        },
+                        onNewChatClicked = {
+                            scope.launch {
+                                // 创建新会话，使用默认名称
+                                val sessionName = "New Chat"
+                                chatViewModel.createSession(sessionName)
+                                
+                                // createSession 是异步的，等待一下确保会话创建完成
+                                // 然后选择新会话以确保消息和草稿被正确初始化
+                                kotlinx.coroutines.delay(200)
+                                val newSession = chatViewModel.currentSession.value
+                                if (newSession != null) {
+                                    chatViewModel.selectSession(newSession)
+                                }
+                                
+                                // 导航到聊天页面
+                                findNavController().popBackStack(R.id.nav_home, false)
+                                
+                                // 关闭抽屉
+                                drawerState.close()
+                            }
+                        },
+                        onRenameSession = { sessionId ->
+                            val session = sessions.find { it.id == sessionId }
+                            if (session != null) {
+                                sessionToRename = session
+                            }
+                        },
+                        onArchiveSession = { sessionId ->
+                            scope.launch {
+                                val session = sessions.find { it.id == sessionId }
+                                if (session != null) {
+                                    chatViewModel.archiveSession(sessionId, !session.archived)
+                                }
+                            }
+                        },
+                        onPinSession = { sessionId ->
+                            scope.launch {
+                                val session = sessions.find { it.id == sessionId }
+                                if (session != null) {
+                                    chatViewModel.pinSession(sessionId, !session.pinned)
+                                }
+                            }
+                        },
+                        onDeleteSession = { sessionId ->
+                            val session = sessions.find { it.id == sessionId }
+                            if (session != null) {
+                                sessionToDelete = session
+                            }
                         }
                     ) {
                         // 侧滑菜单的主要内容区域：嵌入基于 XML 的 Fragment 导航
                         AndroidViewBinding(ContentMainBinding::inflate)
+                    }
+                    
+                    // 重命名对话框
+                    sessionToRename?.let { session ->
+                        RenameSessionDialog(
+                            currentName = session.name,
+                            onDismiss = { sessionToRename = null },
+                            onConfirm = { newName ->
+                                scope.launch {
+                                    chatViewModel.renameSession(session.id, newName)
+                                }
+                                sessionToRename = null
+                            }
+                        )
+                    }
+                    
+                    // 删除确认对话框
+                    sessionToDelete?.let { session ->
+                        DeleteSessionDialog(
+                            sessionName = session.name,
+                            onDismiss = { sessionToDelete = null },
+                            onConfirm = {
+                                scope.launch {
+                                    chatViewModel.deleteSession(session.id)
+                                }
+                                sessionToDelete = null
+                            }
+                        )
                     }
                 }
             },

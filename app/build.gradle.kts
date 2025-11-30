@@ -20,8 +20,12 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
 }
 
+configurations.all {
+    exclude(group = "com.intellij", module = "annotations")
+}
 android {
     compileSdk = libs.versions.compileSdk.get().toInt()
     namespace = "com.example.star.aiwork"
@@ -86,6 +90,7 @@ android {
 }
 
 dependencies {
+    //implementation(libs.room.compiler)
     val composeBom = platform(libs.androidx.compose.bom)
     implementation(composeBom)
     androidTestImplementation(composeBom)
@@ -144,4 +149,12 @@ dependencies {
     // Coil
     implementation(libs.coil.kt.compose)
 
+}
+    // Room
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+
+    // PDFBox
+    implementation(libs.pdfbox.android)
 }
