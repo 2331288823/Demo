@@ -21,6 +21,7 @@ package com.example.star.aiwork.ui.conversation
 import android.Manifest
 import android.content.ClipDescription
 import android.content.pm.PackageManager
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,6 +50,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.paddingFrom
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -56,6 +58,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -95,6 +98,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LastBaseline
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
@@ -102,7 +106,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -125,6 +136,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import kotlin.math.roundToInt
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.wrapContentSize
+
+
 
 /**
  * 对话屏幕的入口点。
@@ -171,10 +187,10 @@ fun ConversationContent(
     val topBarState = rememberTopAppBarState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(topBarState)
     val scope = rememberCoroutineScope()
-    
+
     // 显示模型设置对话框的状态
     var showSettingsDialog by remember { mutableStateOf(false) }
-    
+
     // 将从 ViewModel 传递的参数与 UiState 同步
     // 这确保了 UI 反映持久化的设置
     LaunchedEffect(temperature, maxTokens, streamResponse) {
@@ -191,15 +207,15 @@ fun ConversationContent(
     var borderStroke by remember {
         mutableStateOf(Color.Transparent)
     }
-    
+
     // 如果请求，显示模型设置对话框
     if (showSettingsDialog) {
         ModelSettingsDialog(
             uiState = uiState,
-            onDismissRequest = { 
+            onDismissRequest = {
                 // 当对话框关闭时保存设置
                 onUpdateSettings(uiState.temperature, uiState.maxTokens, uiState.streamResponse)
-                showSettingsDialog = false 
+                showSettingsDialog = false
             }
         )
     }
@@ -252,66 +268,56 @@ fun ConversationContent(
             .build()
     }
     val provider = remember { OpenAIProvider(client) }
-    
+
     // 根据 ID 选择当前的 Provider 和 Model
-    val providerSetting = remember(providerSettings, activeProviderId) { 
-        providerSettings.find { it.id == activeProviderId } ?: providerSettings.firstOrNull() 
+    val providerSetting = remember(providerSettings, activeProviderId) {
+        providerSettings.find { it.id == activeProviderId } ?: providerSettings.firstOrNull()
     }
-    val model = remember(providerSetting, activeModelId) { 
-        providerSetting?.models?.find { it.modelId == activeModelId } ?: providerSetting?.models?.firstOrNull() 
+    val model = remember(providerSetting, activeModelId) {
+        providerSetting?.models?.find { it.modelId == activeModelId } ?: providerSetting?.models?.firstOrNull()
     }
 
     // 初始化用于语音转文本的音频录制器和 WebSocket
     val audioRecorder = remember { AudioRecorder(context) }
-    
+
     // 跟踪挂起的部分文本长度，以便在实时转录期间正确替换它
     var lastPartialLength by remember { mutableIntStateOf(0) }
-    
+
     // 处理 ASR 结果的转录监听器
     val transcriptionListener = remember(scope, uiState) {
         object : YoudaoWebSocket.TranscriptionListener {
-            override fun onResult(text: String, isFinal: Boolean) {
+            override fun onTranscriptionReceived(text: String) {  // ✅ 修正方法名
                 scope.launch(Dispatchers.Main) {
-                    val currentText = uiState.textFieldValue.text
-                    
-                    // 删除以前的部分文本（如果有），以便使用新的部分或最终结果进行更新
-                    val safeCurrentText = if (currentText.length >= lastPartialLength) {
-                        currentText.substring(0, currentText.length - lastPartialLength)
-                    } else {
-                        currentText // 通常不应该发生
-                    }
-                    
-                    val newText = safeCurrentText + text
-                    
                     uiState.textFieldValue = uiState.textFieldValue.copy(
-                        text = newText,
-                        selection = TextRange(newText.length)
+                        text = text,
+                        selection = TextRange(text.length)
                     )
-                    
-                    // 更新 lastPartialLength：如果是最终结果，重置为 0，否则存储当前长度
-                    lastPartialLength = if (isFinal) 0 else text.length
                 }
             }
 
-            override fun onError(t: Throwable) {
-                android.util.Log.e("Conversation", "ASR Error", t)
+            override fun onError(error: String) {  // ✅ 修正参数类型
+                Log.e("VoiceInput", "ASR Error: $error")
                 scope.launch(Dispatchers.Main) {
-                    Toast.makeText(context, "Error: ${t.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "识别错误: $error", Toast.LENGTH_LONG).show()
                 }
             }
         }
     }
-    val youdaoWebSocket = remember { YoudaoWebSocket(transcriptionListener) }
+    val youdaoWebSocket = remember {
+        YoudaoWebSocket().apply {
+            listener = transcriptionListener
+        }
+    }
 
     // 音频录制的权限启动器
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
         if (isGranted) {
-             // Permission granted, trying to start recording again... 
-             // Note: Ideally we should not auto-start, but for user convenience here we might want to signal UI
-             // However, the original logic required user to press again.
-             Toast.makeText(context, "Permission granted, press record again", Toast.LENGTH_SHORT).show()
+            // Permission granted, trying to start recording again...
+            // Note: Ideally we should not auto-start, but for user convenience here we might want to signal UI
+            // However, the original logic required user to press again.
+            Toast.makeText(context, "Permission granted, press record again", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(context, "需要录音权限才能使用语音功能", Toast.LENGTH_SHORT).show()
         }
@@ -322,6 +328,7 @@ fun ConversationContent(
         onDispose {
             youdaoWebSocket.close()
             audioRecorder.stopRecording()
+            audioRecorder.cleanup()
         }
     }
 
@@ -361,19 +368,19 @@ fun ConversationContent(
                 modifier = Modifier.weight(1f),
                 scrollState = scrollState,
             )
-            
-            // 用户输入区域
+
+            // 用户输入区域//f2
             UserInput(
                 selectedImageUri = uiState.selectedImageUri,
                 onImageSelected = { uri -> uiState.selectedImageUri = uri },
                 onMessageSent = { content ->
                     // 将发送逻辑封装为挂起函数，支持递归调用
                     suspend fun processMessage(
-                        inputContent: String, 
+                        inputContent: String,
                         isAutoTriggered: Boolean = false,
                         loopCount: Int = 0
                     ) {
-                         // 1. 如果是用户手动发送，立即显示消息；自动追问也显示在 UI 上
+                        // 1. 如果是用户手动发送，立即显示消息；自动追问也显示在 UI 上
                         if (!isAutoTriggered) {
                             val currentImageUri = uiState.selectedImageUri
                             uiState.addMessage(
@@ -390,20 +397,20 @@ fun ConversationContent(
                             // 自动追问消息，可以显示不同的样式或前缀，这里简单处理
                             uiState.addMessage(Message(authorMe, "[Auto-Loop ${loopCount}] $inputContent", timeNow))
                         }
-                        
+
                         // 2. 调用 LLM 获取响应
                         if (providerSetting != null && model != null) {
                             // 检查提供商是否兼容
                             if (providerSetting !is ProviderSetting.OpenAI) {
-                                 uiState.addMessage(
+                                uiState.addMessage(
                                     Message("System", "Currently only OpenAI compatible providers are supported.", timeNow)
                                 )
                                 return
                             }
-                            
+
                             try {
                                 val activeAgent = uiState.activeAgent
-                                
+
                                 // 构造实际要发送的用户消息（考虑模板）
                                 // 仅对第一条用户原始输入应用模板，自动循环的消息通常是系统生成的指令，不应用模板
                                 val finalUserContent = if (activeAgent != null && !isAutoTriggered) {
@@ -411,27 +418,27 @@ fun ConversationContent(
                                 } else {
                                     inputContent
                                 }
-                                
+
                                 // 收集上下文消息：最近的聊天历史
                                 val contextMessages = uiState.messages.asReversed().map { msg ->
                                     val role = if (msg.author == authorMe) MessageRole.USER else MessageRole.ASSISTANT
                                     val parts = mutableListOf<UIMessagePart>()
-                                    
+
                                     // 文本部分
                                     if (msg.content.isNotEmpty()) {
                                         parts.add(UIMessagePart.Text(msg.content))
                                     }
-                                    
+
                                     // 图片部分（如果有）
                                     // 注意：历史消息中的图片可能需要从 URI 读取并转换为 Base64，或者如果是网络图片直接使用 URL
                                     // 这里简化处理，仅当有 imageUrl 且是 content 协议（本地图片）时尝试读取
                                     // 对于上下文中的历史图片，如果太大可能需要压缩或忽略，视 API 限制而定
                                     // 简单起见，这里假设只发送当前消息的图片，历史消息的图片暂不回传给 API（或者你可以实现回传逻辑）
                                     // 如果要支持多轮对话带图，需要在这里处理
-                                    
+
                                     UIMessage(role = role, parts = parts)
-                                }.takeLast(10).toMutableList() 
-                                
+                                }.takeLast(10).toMutableList()
+
                                 // **组装完整的消息列表 (Prompt Construction)**
                                 val messagesToSend = mutableListOf<UIMessage>()
 
@@ -452,10 +459,10 @@ fun ConversationContent(
                                         ))
                                     }
                                 }
-                                
+
                                 // 4. 历史对话 (Conversation History)
                                 messagesToSend.addAll(contextMessages)
-                                
+
                                 // 5. 当前用户输入 (Current Input)
                                 // 同样的逻辑：如果是新的一轮对话（非从历史中取出），我们需要确保它在列表中
                                 // 如果从历史中取出的最后一条和当前输入重复（或 UI 已经添加了），需要小心处理
@@ -463,15 +470,15 @@ fun ConversationContent(
                                 // 所以 contextMessages 理论上已经包含了最新一条。
                                 // 但是，对于应用模板的情况，我们需要替换最后一条的内容。
                                 if (messagesToSend.isNotEmpty() && messagesToSend.last().role == MessageRole.USER) {
-                                     messagesToSend.removeAt(messagesToSend.lastIndex)
+                                    messagesToSend.removeAt(messagesToSend.lastIndex)
                                 }
-                                
+
                                 // 构建当前消息 parts
                                 val currentParts = mutableListOf<UIMessagePart>()
                                 if (finalUserContent.isNotEmpty()) {
                                     currentParts.add(UIMessagePart.Text(finalUserContent))
                                 }
-                                
+
                                 // 如果有图片（且不是自动循环），读取并转换为 Base64 添加到 parts
                                 if (!isAutoTriggered) {
                                     // 查找最新一条用户消息（刚刚添加的）
@@ -492,7 +499,7 @@ fun ConversationContent(
                                         }
                                     }
                                 }
-                                
+
                                 messagesToSend.add(UIMessage(
                                     role = MessageRole.USER,
                                     parts = currentParts
@@ -500,7 +507,7 @@ fun ConversationContent(
 
                                 // 添加初始空 AI 消息占位符
                                 uiState.addMessage(
-                                    Message("AI", "", timeNow)
+                                    Message("AI", "", timeNow, isLoading = true) // ✅ 标记为加载中
                                 )
 
                                 var fullResponse = ""
@@ -539,24 +546,24 @@ fun ConversationContent(
                                     fullResponse = content
                                     withContext(Dispatchers.Main) {
                                         if (content.isNotEmpty()) {
-                                             uiState.appendToLastMessage(content)
+                                            uiState.appendToLastMessage(content)
                                         }
                                     }
                                 }
 
                                 // --- Auto-Loop Logic with Planner ---
                                 if (uiState.isAutoLoopEnabled && loopCount < uiState.maxLoopCount && fullResponse.isNotBlank()) {
-                                    
+
                                     // Step 2: 调用 Planner 模型生成下一步追问
                                     // 这里我们使用单独的非流式请求，不更新 UI，只为获取指令
-                                    
+
                                     val plannerSystemPrompt = """
                                         You are a task planner agent.
                                         Analyze the previous AI response and generate a short, specific instruction for the next step to deepen the task or solve remaining issues.
                                         If the task appears complete or no further meaningful steps are needed, reply with exactly "STOP".
                                         Output ONLY the instruction or "STOP".
                                     """.trimIndent()
-                                    
+
                                     val plannerMessages = listOf(
                                         UIMessage(role = MessageRole.SYSTEM, parts = listOf(UIMessagePart.Text(plannerSystemPrompt))),
                                         UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("Previous Response:\n$fullResponse")))
@@ -572,9 +579,9 @@ fun ConversationContent(
                                             maxTokens = 100
                                         )
                                     )
-                                    
+
                                     val nextInstruction = plannerResponse.choices.firstOrNull()?.message?.toText()?.trim() ?: "STOP"
-                                    
+
                                     if (nextInstruction != "STOP" && nextInstruction.isNotEmpty()) {
                                         // 递归调用，使用 Planner 生成的指令
                                         processMessage(nextInstruction, isAutoTriggered = true, loopCount = loopCount + 1)
@@ -590,12 +597,12 @@ fun ConversationContent(
                                 e.printStackTrace()
                             }
                         } else {
-                             uiState.addMessage(
+                            uiState.addMessage(
                                 Message("System", "No AI Provider configured.", timeNow)
                             )
                         }
                     }
-                    
+
                     scope.launch {
                         processMessage(content)
                     }
@@ -619,15 +626,18 @@ fun ConversationContent(
                         scope.launch(Dispatchers.IO) {
                             youdaoWebSocket.connect()
                             audioRecorder.startRecording(
-                                onAudioData = { data, len ->
-                                    youdaoWebSocket.sendAudio(data, len)
+                                onAudioData = { data, size ->
+                                    // ✅ 添加这一行日志
+                                    Log.d("VoiceInput", "📤 Sending $size bytes to Youdao WebSocket")
+
+                                    youdaoWebSocket.sendAudio(data, size)
                                 },
-                                onError = { e ->
-                                    android.util.Log.e("Conversation", "AudioRecorder Error", e)
-                                    scope.launch(Dispatchers.Main) {
-                                        uiState.isRecording = false
-                                        Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                onError = { error ->
+                                    Log.e("VoiceInput", "❌ Recording error: ${error.message}")
+                                    scope.launch {
+                                        Toast.makeText(context, "录音失败: ${error.message}", Toast.LENGTH_SHORT).show()
                                     }
+                                    uiState.isRecording = false  // ✅ 修正
                                 }
                             )
                         }
@@ -783,7 +793,7 @@ fun ModelSettingsDialog(
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                 Row(
+                Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier.fillMaxWidth()
@@ -830,11 +840,11 @@ fun ModelSettingsDialog(
                         onCheckedChange = { uiState.streamResponse = it }
                     )
                 }
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
-                
+
                 HorizontalDivider()
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // Auto-Loop 开关
@@ -867,7 +877,7 @@ fun ModelSettingsDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                         Text(
+                        Text(
                             text = "Max Loops: ${uiState.maxLoopCount}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface
@@ -949,7 +959,7 @@ fun Messages(messages: List<Message>, navigateToProfile: (String) -> Unit, scrol
         val jumpToBottomButtonEnabled by remember {
             derivedStateOf {
                 scrollState.firstVisibleItemIndex != 0 ||
-                    scrollState.firstVisibleItemScrollOffset > jumpThreshold
+                        scrollState.firstVisibleItemScrollOffset > jumpThreshold
             }
         }
 
@@ -981,13 +991,18 @@ fun Message(
     }
 
     val spaceBetweenAuthors = if (isLastMessageByAuthor) Modifier.padding(top = 8.dp) else Modifier
-    Row(modifier = spaceBetweenAuthors) {
-        if (isLastMessageByAuthor) {
-            // 头像
+
+    // 根据用户类型调整布局方向
+    Row(
+        modifier = spaceBetweenAuthors.fillMaxWidth(),
+        horizontalArrangement = if (isUserMe) Arrangement.End else Arrangement.Start
+    ) {
+        // AI 消息：头像在左侧
+        if (!isUserMe && isLastMessageByAuthor) {
             Image(
                 modifier = Modifier
                     .clickable(onClick = { onAuthorClick(msg.author) })
-                    .padding(horizontal = 16.dp)
+                    .padding(start = 16.dp, end = 8.dp)
                     .size(42.dp)
                     .border(1.5.dp, borderColor, CircleShape)
                     .border(3.dp, MaterialTheme.colorScheme.surface, CircleShape)
@@ -997,10 +1012,13 @@ fun Message(
                 contentScale = ContentScale.Crop,
                 contentDescription = null,
             )
-        } else {
-            // 头像下方的空间
-            Spacer(modifier = Modifier.width(74.dp))
+        } else if (!isUserMe) {
+            // AI 消息头像占位
+            Spacer(modifier = Modifier.width(58.dp))
         }
+
+        // ✅ 修改：消息内容 - 让气泡自适应宽度
+        // 不使用 Box，直接调用 AuthorAndTextMessage
         AuthorAndTextMessage(
             msg = msg,
             isUserMe = isUserMe,
@@ -1008,9 +1026,29 @@ fun Message(
             isLastMessageByAuthor = isLastMessageByAuthor,
             authorClicked = onAuthorClick,
             modifier = Modifier
-                .padding(end = 16.dp)
-                .weight(1f),
+                .widthIn(min = 48.dp, max = 280.dp)  // ✅ 设置最小和最大宽度
+                .wrapContentWidth()  // ✅ 让内容决定宽度
         )
+
+        // 用户消息：头像在右侧
+        if (isUserMe && isLastMessageByAuthor) {
+            Image(
+                modifier = Modifier
+                    .clickable(onClick = { onAuthorClick(msg.author) })
+                    .padding(start = 8.dp, end = 16.dp)
+                    .size(42.dp)
+                    .border(1.5.dp, borderColor, CircleShape)
+                    .border(3.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                    .clip(CircleShape)
+                    .align(Alignment.Top),
+                painter = painterResource(id = msg.authorImage),
+                contentScale = ContentScale.Crop,
+                contentDescription = null,
+            )
+        } else if (isUserMe) {
+            // 用户消息头像占位
+            Spacer(modifier = Modifier.width(58.dp))
+        }
     }
 }
 
@@ -1024,9 +1062,7 @@ fun AuthorAndTextMessage(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
-        if (isLastMessageByAuthor) {
-            AuthorNameTimestamp(msg)
-        }
+        // 不再显示作者名和时间戳
         ChatItemBubble(msg, isUserMe, authorClicked = authorClicked)
         if (isFirstMessageByAuthor) {
             // 下一个作者之前的最后一个气泡
@@ -1059,7 +1095,21 @@ private fun AuthorNameTimestamp(msg: Message) {
     }
 }
 
-private val ChatBubbleShape = RoundedCornerShape(4.dp, 20.dp, 20.dp, 20.dp)
+//f3
+private val UserChatBubbleShape = RoundedCornerShape(
+    topStart = 20.dp,
+    topEnd = 20.dp,
+    bottomStart = 20.dp,
+    bottomEnd = 4.dp // 右下角尖角
+)
+
+// AI 消息气泡（左侧带尾巴）
+private val AIChatBubbleShape = RoundedCornerShape(
+    topStart = 20.dp,
+    topEnd = 20.dp,
+    bottomStart = 4.dp, // 左下角尖角
+    bottomEnd = 20.dp
+)
 
 @Composable
 fun DayHeader(dayString: String) {
@@ -1091,6 +1141,8 @@ private fun RowScope.DayHeaderLine() {
 
 @Composable
 fun ChatItemBubble(message: Message, isUserMe: Boolean, authorClicked: (String) -> Unit) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
 
     val backgroundBubbleColor = if (isUserMe) {
         MaterialTheme.colorScheme.primary
@@ -1098,25 +1150,63 @@ fun ChatItemBubble(message: Message, isUserMe: Boolean, authorClicked: (String) 
         MaterialTheme.colorScheme.surfaceVariant
     }
 
+    // 根据用户类型选择不同的气泡形状
+    val bubbleShape = if (isUserMe) UserChatBubbleShape else AIChatBubbleShape
+
+    // ✅ 判断是否为纯文本内容
+    val isPureText = isPureTextContent(message.content)
+
     Column {
+        // ✅ 修改：整体结构 - 气泡 + 复制按钮分开布局
+        // 消息气泡
         Surface(
             color = backgroundBubbleColor,
-            shape = ChatBubbleShape,
+            shape = bubbleShape,
         ) {
-            ClickableMessage(
-                message = message,
-                isUserMe = isUserMe,
-                authorClicked = authorClicked,
-            )
+            // 检查是否正在加载
+            if (message.isLoading) {
+                LoadingIndicator()  // 显示加载动画
+            } else {
+                ClickableMessage(
+                    message = message,
+                    isUserMe = isUserMe,
+                    authorClicked = authorClicked,
+                )
+            }
         }
-        
+
+        // ✅ 新增：复制按钮 - 在气泡外部的右下角
+        // 只在 AI 消息 + 非加载状态 + 有内容 + 纯文本时显示
+        if (!isUserMe && !message.isLoading && message.content.isNotEmpty() && isPureText) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(end = 4.dp, top = 4.dp),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                IconButton(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(message.content))
+                        Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ContentCopy,
+                        contentDescription = "复制消息",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+
         // 显示图片（如果存在）
-        // 优先使用 imageUrl (本地或网络URI), 其次是 image 资源ID
         if (message.imageUrl != null) {
             Spacer(modifier = Modifier.height(4.dp))
             Surface(
                 color = backgroundBubbleColor,
-                shape = ChatBubbleShape,
+                shape = bubbleShape,
             ) {
                 AsyncImage(
                     model = message.imageUrl,
@@ -1129,7 +1219,7 @@ fun ChatItemBubble(message: Message, isUserMe: Boolean, authorClicked: (String) 
             Spacer(modifier = Modifier.height(4.dp))
             Surface(
                 color = backgroundBubbleColor,
-                shape = ChatBubbleShape,
+                shape = bubbleShape,
             ) {
                 Image(
                     painter = painterResource(message.image),
@@ -1144,30 +1234,464 @@ fun ChatItemBubble(message: Message, isUserMe: Boolean, authorClicked: (String) 
 
 @Composable
 fun ClickableMessage(message: Message, isUserMe: Boolean, authorClicked: (String) -> Unit) {
-    val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
 
-    val styledMessage = messageFormatter(
-        text = message.content,
-        primary = isUserMe,
-    )
+    val textColor = if (isUserMe) {
+        MaterialTheme.colorScheme.onPrimary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
 
-    ClickableText(
-        text = styledMessage,
-        style = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
-        modifier = Modifier.padding(16.dp),
-        onClick = {
-            styledMessage
-                .getStringAnnotations(start = it, end = it)
-                .firstOrNull()
-                ?.let { annotation ->
-                    when (annotation.tag) {
-                        SymbolAnnotationType.LINK.name -> uriHandler.openUri(annotation.item)
-                        SymbolAnnotationType.PERSON.name -> authorClicked(annotation.item)
-                        else -> Unit
+    val codeBlockBackground = if (isUserMe) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+    } else {
+        MaterialTheme.colorScheme.surfaceContainer
+    }
+
+    val codeTextColor = if (isUserMe) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+
+    Column(modifier = Modifier.padding(16.dp)) {
+        SimpleMarkdownRenderer(
+            markdown = message.content,
+            textColor = textColor,
+            codeBlockBackground = codeBlockBackground,
+            codeTextColor = codeTextColor,
+            onCodeBlockCopy = { code ->
+                clipboardManager.setText(AnnotatedString(code))
+                Toast.makeText(context, "代码已复制", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+}
+
+@Composable
+fun SimpleMarkdownRenderer(
+    markdown: String,
+    textColor: Color,
+    codeBlockBackground: Color,
+    codeTextColor: Color,
+    onCodeBlockCopy: (String) -> Unit
+) {
+    val codeBlockRegex = Regex("```([\\w]*)?\\n([\\s\\S]*?)```")
+    val matches = codeBlockRegex.findAll(markdown).toList()
+
+    if (matches.isEmpty()) {
+        // 没有代码块，渲染带格式的文本
+        RenderMarkdownText(markdown, textColor, codeBlockBackground)
+    } else {
+        // 有代码块，逐段渲染
+        var lastIndex = 0
+
+        // ✅ 修改：移除 fillMaxWidth()
+        Column {
+            matches.forEach { match ->
+                val beforeCode = markdown.substring(lastIndex, match.range.first)
+                if (beforeCode.isNotEmpty()) {
+                    RenderMarkdownText(beforeCode, textColor, codeBlockBackground)
+                }
+
+                val language = match.groupValues[1].takeIf { it.isNotEmpty() } ?: "text"
+                val code = match.groupValues[2].trim()
+
+                Spacer(modifier = Modifier.height(8.dp))
+                CodeBlockWithCopyButton(
+                    code = code,
+                    language = language,
+                    onCopy = { onCodeBlockCopy(code) },
+                    backgroundColor = codeBlockBackground,
+                    textColor = codeTextColor
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                lastIndex = match.range.last + 1
+            }
+
+            val afterCode = markdown.substring(lastIndex)
+            if (afterCode.isNotEmpty()) {
+                RenderMarkdownText(afterCode, textColor, codeBlockBackground)
+            }
+        }
+    }
+}
+
+@Composable
+fun RenderMarkdownText(
+    markdown: String,
+    textColor: Color,
+    codeBlockBackground: Color
+) {
+    val lines = markdown.split("\n")
+    var inTable = false
+    val tableRows = mutableListOf<List<String>>()
+
+    // ✅ 修改：移除 fillMaxWidth()
+    Column {
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i].trimEnd()
+
+            // 处理表格
+            if (line.contains("|") && line.trim().startsWith("|")) {
+                if (!inTable) {
+                    inTable = true
+                    tableRows.clear()
+                }
+                tableRows.add(line.split("|").map { it.trim() }.filter { it.isNotEmpty() })
+                i++
+                continue
+            } else if (inTable) {
+                // 表格结束，渲染表格
+                if (tableRows.size >= 2) {
+                    RenderTable(tableRows, textColor, codeBlockBackground)
+                }
+                inTable = false
+                tableRows.clear()
+            }
+
+            // 处理分隔线
+            if (line.matches(Regex("^[-*_]{3,}$"))) {
+                HorizontalDivider(
+                    modifier = Modifier
+                        .fillMaxWidth()  // ✅ 分隔线保留 fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    color = textColor.copy(alpha = 0.3f)
+                )
+                i++
+                continue
+            }
+
+            // 处理标题
+            val headerMatch = Regex("^(#{1,6})\\s+(.+)$").find(line)
+            if (headerMatch != null) {
+                val level = headerMatch.groupValues[1].length
+                val text = headerMatch.groupValues[2]
+                Text(
+                    text = parseInlineMarkdown(text, textColor, codeBlockBackground),
+                    style = when (level) {
+                        1 -> MaterialTheme.typography.headlineLarge
+                        2 -> MaterialTheme.typography.headlineMedium
+                        3 -> MaterialTheme.typography.headlineSmall
+                        4 -> MaterialTheme.typography.titleLarge
+                        5 -> MaterialTheme.typography.titleMedium
+                        else -> MaterialTheme.typography.titleSmall
+                    },
+                    // ✅ 修改：移除 fillMaxWidth()
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                i++
+                continue
+            }
+
+            // 处理无序列表
+            val unorderedListMatch = Regex("^[*-]\\s+(.+)$").find(line)
+            if (unorderedListMatch != null) {
+                val text = unorderedListMatch.groupValues[1]
+                // ✅ 修改：移除 fillMaxWidth()
+                Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                    Text(
+                        text = "• ",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = textColor,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text(
+                        text = parseInlineMarkdown(text, textColor, codeBlockBackground),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+                i++
+                continue
+            }
+
+            // 处理有序列表
+            val orderedListMatch = Regex("^(\\d+)\\.\\s+(.+)$").find(line)
+            if (orderedListMatch != null) {
+                val number = orderedListMatch.groupValues[1]
+                val text = orderedListMatch.groupValues[2]
+                // ✅ 修改：移除 fillMaxWidth()
+                Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                    Text(
+                        text = "$number. ",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = textColor,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text(
+                        text = parseInlineMarkdown(text, textColor, codeBlockBackground),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+                i++
+                continue
+            }
+
+            // 处理引用块
+            val quoteMatch = Regex("^>\\s+(.+)$").find(line)
+            if (quoteMatch != null) {
+                val text = quoteMatch.groupValues[1]
+                Surface(
+                    color = codeBlockBackground.copy(alpha = 0.3f),
+                    shape = RoundedCornerShape(4.dp),
+                    // ✅ 修改：移除 fillMaxWidth()
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    Row {
+                        Box(
+                            modifier = Modifier
+                                .width(4.dp)
+                                .height(32.dp)
+                                .background(textColor.copy(alpha = 0.5f))
+                        )
+                        Text(
+                            text = parseInlineMarkdown(text, textColor, codeBlockBackground),
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontStyle = FontStyle.Italic
+                            ),
+                            modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 12.dp)
+                        )
                     }
                 }
-        },
-    )
+                i++
+                continue
+            }
+
+            // 处理普通段落
+            if (line.isNotEmpty()) {
+                Text(
+                    text = parseInlineMarkdown(line, textColor, codeBlockBackground),
+                    style = MaterialTheme.typography.bodyLarge,
+                    // ✅ 修改：移除 fillMaxWidth()
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+            } else {
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            i++
+        }
+
+        // 如果最后还有未渲染的表格
+        if (inTable && tableRows.size >= 2) {
+            RenderTable(tableRows, textColor, codeBlockBackground)
+        }
+    }
+}
+
+@Composable
+fun RenderTable(
+    rows: List<List<String>>,
+    textColor: Color,
+    codeBlockBackground: Color
+) {
+    Surface(
+        color = codeBlockBackground.copy(alpha = 0.2f),
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            rows.forEachIndexed { rowIndex, cells ->
+                // 跳过分隔行（第二行通常是 |---|---|）
+                if (rowIndex == 1 && cells.all { it.matches(Regex("^:?-+:?$")) }) {
+                    HorizontalDivider(color = textColor.copy(alpha = 0.3f))
+                    return@forEachIndexed
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    cells.forEach { cell ->
+                        Text(
+                            text = parseInlineMarkdown(cell, textColor, codeBlockBackground),
+                            style = if (rowIndex == 0) {
+                                MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                            } else {
+                                MaterialTheme.typography.bodyMedium
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(4.dp)
+                        )
+                    }
+                }
+                if (rowIndex < rows.lastIndex && rowIndex != 0) {
+                    HorizontalDivider(color = textColor.copy(alpha = 0.1f))
+                }
+            }
+        }
+    }
+}
+
+fun parseInlineMarkdown(text: String, baseColor: Color, codeBlockBackground: Color): AnnotatedString {
+    return buildAnnotatedString {
+        var currentIndex = 0
+
+        // 定义所有匹配规则（优先级从高到低）
+        val patterns = listOf(
+            Regex("\\*\\*(.+?)\\*\\*") to "bold",        // **粗体**
+            Regex("__(.+?)__") to "bold",                // __粗体__
+            Regex("\\*(.+?)\\*") to "italic",            // *斜体*
+            Regex("_(.+?)_") to "italic",                // _斜体_
+            Regex("~~(.+?)~~") to "strikethrough",       // ~~删除线~~
+            Regex("`(.+?)`") to "code",                  // `行内代码`
+            Regex("\\[(.+?)\\]\\((.+?)\\)") to "link"    // [链接](url)
+        )
+
+        val allMatches = mutableListOf<Triple<IntRange, String, String>>()
+
+        // 收集所有匹配
+        patterns.forEach { (regex, type) ->
+            regex.findAll(text).forEach { match ->
+                val content = if (type == "link") {
+                    match.groupValues[1] // 链接文本
+                } else {
+                    match.groupValues[1]
+                }
+                allMatches.add(Triple(match.range, type, content))
+            }
+        }
+
+        // 按位置排序并去重（避免嵌套冲突）
+        val sortedMatches = allMatches
+            .sortedBy { it.first.first }
+            .fold(mutableListOf<Triple<IntRange, String, String>>()) { acc, match ->
+                if (acc.isEmpty() || match.first.first >= acc.last().first.last) {
+                    acc.add(match)
+                }
+                acc
+            }
+
+        sortedMatches.forEach { (range, type, content) ->
+            // 添加普通文本
+            if (currentIndex < range.first) {
+                append(text.substring(currentIndex, range.first))
+            }
+
+            when (type) {
+                "bold" -> {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = baseColor)) {
+                        append(content)
+                    }
+                }
+                "italic" -> {
+                    withStyle(SpanStyle(fontStyle = FontStyle.Italic, color = baseColor)) {
+                        append(content)
+                    }
+                }
+                "strikethrough" -> {
+                    withStyle(SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough, color = baseColor)) {
+                        append(content)
+                    }
+                }
+                "code" -> {
+                    withStyle(
+                        SpanStyle(
+                            fontFamily = FontFamily.Monospace,
+                            background = codeBlockBackground.copy(alpha = 0.3f),
+                            color = baseColor
+                        )
+                    ) {
+                        append(content)
+                    }
+                }
+                "link" -> {
+                    withStyle(
+                        SpanStyle(
+                            color = Color(0xFF2196F3), // 蓝色链接
+                            textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+                        )
+                    ) {
+                        append(content)
+                    }
+                }
+            }
+
+            currentIndex = range.last + 1
+        }
+
+        // 添加剩余文本
+        if (currentIndex < text.length) {
+            append(text.substring(currentIndex))
+        }
+    }
+}
+
+
+@Composable
+fun CodeBlockWithCopyButton(
+    code: String,
+    language: String,
+    onCopy: () -> Unit,
+    backgroundColor: Color,
+    textColor: Color
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        Surface(
+            color = backgroundColor,
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column {
+                // 代码块顶部栏（语言标签 + 复制按钮）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 语言标签
+                    Text(
+                        text = language,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = textColor.copy(alpha = 0.7f),
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+
+                    // 复制按钮
+                    IconButton(
+                        onClick = onCopy,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "复制代码",
+                            tint = textColor.copy(alpha = 0.7f),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+
+                HorizontalDivider(
+                    color = textColor.copy(alpha = 0.1f),
+                    thickness = 1.dp
+                )
+
+                // 代码内容
+                Text(
+                    text = code,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        color = textColor
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp)
+                )
+            }
+        }
+    }
 }
 
 @Preview
@@ -1195,4 +1719,51 @@ fun DayHeaderPrev() {
     DayHeader("Aug 6")
 }
 
+/**
+ * AI 思考中的加载动画
+ * 小巧的圆形进度指示器，包裹在气泡中
+ */
+@Composable
+fun LoadingIndicator() {
+    Box(
+        modifier = Modifier
+            .padding(16.dp)  // 气泡内边距，与正常消息一致
+            .size(32.dp),    // 小巧的加载图标
+        contentAlignment = Alignment.Center
+    ) {
+        androidx.compose.material3.CircularProgressIndicator(
+            modifier = Modifier.size(24.dp),
+            strokeWidth = 2.5.dp,
+            color = MaterialTheme.colorScheme.primary
+        )
+    }
+}
+
+/**
+ * 判断消息内容是否为纯文本（不包含代码块、表格等复杂格式）
+ *
+ * @param content 消息内容
+ * @return true 表示纯文本，false 表示包含复杂格式
+ */
+fun isPureTextContent(content: String): Boolean {
+    if (content.isEmpty()) return false
+
+    // 检查是否包含代码块
+    val codeBlockRegex = Regex("```[\\s\\S]*?```")
+    if (codeBlockRegex.containsMatchIn(content)) return false
+
+    // 检查是否包含表格（Markdown 表格格式）
+    val tableRegex = Regex("\\|.+\\|")
+    if (tableRegex.containsMatchIn(content)) return false
+
+    // 检查是否包含图片（Markdown 图片格式）
+    val imageRegex = Regex("!\\[.*?\\]\\(.*?\\)")
+    if (imageRegex.containsMatchIn(content)) return false
+
+    // 其他可以接受的 Markdown 格式（粗体、斜体、链接等）
+    // 这些不影响我们显示复制按钮
+    return true
+}
+
 private val JumpToBottomThreshold = 56.dp
+

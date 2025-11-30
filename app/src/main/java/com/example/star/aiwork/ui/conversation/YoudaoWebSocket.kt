@@ -1,195 +1,195 @@
-/*
- * Copyright 2023 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.example.star.aiwork.ui.conversation
 
 import android.util.Log
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import okio.ByteString.Companion.toByteString
+import okio.ByteString
+import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * 有道智云实时语音翻译 WebSocket 客户端。
+ * 有道语音识别 WebSocket 客户端
  *
- * 负责与有道语音识别服务建立连接，发送音频数据，并接收识别结果。
- *
- * @param listener 识别结果回调监听器。
+ * 负责与有道语音识别 API 建立 WebSocket 连接,
+ * 发送音频数据并接收识别结果。
  */
-class YoudaoWebSocket(private val listener: TranscriptionListener) {
-
-    // 有道 API 配置
-    // 注意：在生产环境中，应将这些敏感信息存储在安全的地方（如 BuildConfig 或加密存储），不应硬编码。
-    private val appKey = "1fa9647ca43dd17a"
-    private val appSecret = "adcF7pXU5MK2yfzVRN5OfJSSUVsIpLEg"
-    private val url = "wss://openapi.youdao.com/stream_asropenapi"
-
+class YoudaoWebSocket {
     private var webSocket: WebSocket? = null
     private val client = OkHttpClient.Builder()
         .readTimeout(10, TimeUnit.SECONDS)
-        .writeTimeout(10, TimeUnit.SECONDS)
-        .connectTimeout(10, TimeUnit.SECONDS)
         .build()
-    
-    private val json = Json { ignoreUnknownKeys = true }
+
+    private val appKey = "1fa9647ca43dd17a"
+    private val appSecret = "adcF7pXU5MK2yfzVRN5OfJSSUVsIpLEg"
+
+    var listener: TranscriptionListener? = null
 
     /**
-     * 转录监听器接口。
-     */
-    interface TranscriptionListener {
-        /**
-         * 接收到识别结果。
-         * @param text 识别出的文本。
-         * @param isFinal 是否为最终结果（如果为 false，则为中间部分结果）。
-         */
-        fun onResult(text: String, isFinal: Boolean)
-        
-        /**
-         * 发生错误。
-         */
-        fun onError(t: Throwable)
-    }
-
-    /**
-     * 连接 WebSocket。
-     * 生成签名并建立连接。
+     * 连接到有道语音识别服务
      */
     fun connect() {
+        Log.d(TAG, "🔌 Attempting to connect to Youdao WebSocket...")
+
         val salt = UUID.randomUUID().toString()
-        val curTime = (System.currentTimeMillis() / 1000).toString()
-        val signStr = appKey + salt + curTime + appSecret
+        val curtime = (System.currentTimeMillis() / 1000).toString()
+        val signStr = appKey + salt + curtime + appSecret
         val sign = sha256(signStr)
 
-        val requestUrl = "$url?appKey=$appKey&salt=$salt&curtime=$curTime&sign=$sign&signType=v4&langType=zh-CHS&rate=16000&format=wav&channel=1&version=v1"
+        Log.d(TAG, "🔑 Auth params - appKey: $appKey, salt: $salt, curtime: $curtime")
+
+        val url = "wss://openapi.youdao.com/stream_asropenapi" +
+                "?appKey=$appKey" +
+                "&salt=$salt" +
+                "&curtime=$curtime" +
+                "&sign=$sign" +
+                "&signType=v4" +
+                "&format=wav" +
+                "&rate=16000" +
+                "&channel=1" +
+                "&version=v1" +
+                "&pointParam=yes"
 
         val request = Request.Builder()
-            .url(requestUrl)
+            .url(url)
             .build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d("YoudaoWebSocket", "Connected")
+                Log.d(TAG, "✅ WebSocket OPENED successfully!")
+                Log.d(TAG, "📡 Response code: ${response.code}")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                Log.d(TAG, "📩 ========== RECEIVED MESSAGE ==========")
+                Log.d(TAG, "📩 Raw text: $text")
+
                 try {
-                    // 解析 JSON 响应
-                    val jsonElement = json.parseToJsonElement(text)
-                    // 安全转换为 JsonObject，避免异常
-                    val jsonObject = jsonElement as? JsonObject
-                    
-                    if (jsonObject == null) {
-                        Log.w("YoudaoWebSocket", "Received non-object JSON: $text")
-                        return
-                    }
-                    
-                    // 安全获取 errorCode
-                    // 使用 (element as? JsonPrimitive) 避免 "is not a JsonPrimitive" 异常
-                    val errorCodeElement = jsonObject["errorCode"]
-                    val errorCode = (errorCodeElement as? JsonPrimitive)?.contentOrNull
-                    
-                    if (errorCode == "0") {
-                        // 解析结果: {"result":[{"st":{"sentence":"...", "partial":true}, "seg_id":...}]}
-                        val resultArr = jsonObject["result"] as? JsonArray
-                        val resultObj = resultArr?.getOrNull(0) as? JsonObject
-                        val st = resultObj?.get("st") as? JsonObject
-                        
-                        val sentenceElement = st?.get("sentence")
-                        val sentence = (sentenceElement as? JsonPrimitive)?.contentOrNull
-                        
-                        val partialElement = st?.get("partial")
-                        val partial = (partialElement as? JsonPrimitive)?.booleanOrNull ?: true
-                        
-                        if (!sentence.isNullOrEmpty()) {
-                            listener.onResult(sentence, isFinal = !partial) 
+                    val json = JSONObject(text)
+
+                    // 打印格式化的 JSON
+                    Log.d(TAG, "📝 Formatted JSON:\n${json.toString(2)}")
+
+                    val action = json.optString("action")
+                    Log.d(TAG, "🎬 Action type: '$action'")
+
+                    when (action) {
+                        "started" -> {
+                            Log.d(TAG, "▶️ Recognition STARTED")
                         }
-                    } else if (errorCode != null) {
-                        Log.e("YoudaoWebSocket", "Error from server: $errorCode")
-                    } else {
-                        // 如果没有 errorCode 字段，尝试直接解析 result (兼容性处理)
-                         val resultArr = jsonObject["result"] as? JsonArray
-                         val resultObj = resultArr?.getOrNull(0) as? JsonObject
-                         val st = resultObj?.get("st") as? JsonObject
-                         val sentence = (st?.get("sentence") as? JsonPrimitive)?.contentOrNull
-                         
-                         if (!sentence.isNullOrEmpty()) {
-                             val partial = (st?.get("partial") as? JsonPrimitive)?.booleanOrNull ?: true
-                             listener.onResult(sentence, isFinal = !partial) 
-                         }
+                        "result" -> {
+                            val segId = json.optInt("seg_id")
+                            val result = json.optString("result")
+                            val isFinal = json.optBoolean("isEnd", false)
+
+                            Log.d(TAG, "✅ ========== RECOGNITION RESULT ==========")
+                            Log.d(TAG, "✅ Segment ID: $segId")
+                            Log.d(TAG, "✅ Is Final: $isFinal")
+                            Log.d(TAG, "✅ Transcription: '$result'")
+                            Log.d(TAG, "✅ =========================================")
+
+                            if (result.isNotEmpty()) {
+                                listener?.onTranscriptionReceived(result)
+                                Log.d(TAG, "📤 Sent result to listener")
+                            } else {
+                                Log.w(TAG, "⚠️ Empty result received")
+                            }
+                        }
+                        "error" -> {
+                            val errorCode = json.optString("errorCode")
+                            val descCN = json.optString("descCN")
+                            val descEN = json.optString("desc")
+
+                            Log.e(TAG, "❌ ========== ERROR RECEIVED ==========")
+                            Log.e(TAG, "❌ Error Code: $errorCode")
+                            Log.e(TAG, "❌ Description (CN): $descCN")
+                            Log.e(TAG, "❌ Description (EN): $descEN")
+                            Log.e(TAG, "❌ =====================================")
+
+                            listener?.onError(descCN.ifEmpty { descEN })
+                        }
+                        else -> {
+                            Log.w(TAG, "⚠️ Unknown action type: '$action'")
+                        }
                     }
                 } catch (e: Exception) {
-                    Log.e("YoudaoWebSocket", "Json parse error: ${e.message}. Raw text: $text", e)
+                    Log.e(TAG, "💥 Failed to parse JSON message", e)
+                    Log.e(TAG, "💥 Original message: $text")
                 }
-            }
 
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                Log.d("YoudaoWebSocket", "Closing: $code / $reason")
-                webSocket.close(1000, null)
+                Log.d(TAG, "📩 ========== END MESSAGE ==========")
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e("YoudaoWebSocket", "Failure", t)
-                listener.onError(t)
+                Log.e(TAG, "💥 ========== WebSocket FAILED ==========")
+                Log.e(TAG, "💥 Error: ${t.message}")
+                Log.e(TAG, "💥 Response: ${response?.message}")
+                Log.e(TAG, "💥 =======================================", t)
+                listener?.onError(t.message ?: "Connection failed")
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(TAG, "🔒 WebSocket CLOSED - Code: $code, Reason: '$reason'")
             }
         })
     }
 
     /**
-     * 发送音频数据。
-     *
-     * @param data 音频 PCM 数据。
-     * @param len 数据长度。
+     * 发送音频数据
+     * @param audioData PCM 音频数据
+     * @param size 数据大小
      */
-    fun sendAudio(data: ByteArray, len: Int) {
-        if (len > 0) {
-            val byteString = data.copyOfRange(0, len).toByteString()
-            webSocket?.send(byteString)
+    fun sendAudio(audioData: ByteArray, size: Int) {
+        webSocket?.let {
+            val data = audioData.copyOf(size)
+            val sent = it.send(ByteString.of(*data))
+
+            if (sent) {
+                // 每秒只打印一次,避免日志刷屏
+                if (System.currentTimeMillis() % 1000 < 50) {
+                    Log.d(TAG, "📤 Sent $size bytes of audio data")
+                }
+            } else {
+                Log.e(TAG, "❌ Failed to send audio data (size: $size)")
+            }
+        } ?: run {
+            Log.e(TAG, "❌ Cannot send audio: WebSocket is null!")
         }
     }
 
     /**
-     * 关闭连接。
-     * 发送结束帧（如果有协议规定）并关闭 WebSocket。
+     * 关闭连接
      */
     fun close() {
-        // 有道协议建议发送特定的结束帧 "{\"end\": \"true\"}" ? 
-        // 文档不一，这里直接关闭连接
+        Log.d(TAG, "🔌 Closing WebSocket connection...")
         webSocket?.close(1000, "User stopped")
         webSocket = null
+        Log.d(TAG, "✅ WebSocket closed")
     }
 
     /**
-     * SHA-256 签名计算。
+     * SHA-256 加密
      */
-    private fun sha256(str: String): String {
+    private fun sha256(input: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(str.toByteArray(StandardCharsets.UTF_8))
+        val hash = digest.digest(input.toByteArray(StandardCharsets.UTF_8))
         return hash.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * 识别结果监听器
+     */
+    interface TranscriptionListener {
+        fun onTranscriptionReceived(text: String)
+        fun onError(error: String)
+    }
+
+    companion object {
+        private const val TAG = "YoudaoWebSocket"
     }
 }

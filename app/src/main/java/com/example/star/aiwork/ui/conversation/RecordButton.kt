@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -64,14 +65,14 @@ fun RecordButton(
     val infiniteTransition = rememberInfiniteTransition(label = "RecordAnimation")
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f,
-        targetValue = if (isRecording) 1.2f else 1f,
+        targetValue = if (isRecording) 1.1f else 1f,  // ✅ 改：从 1.2f 改为 1.1f，动画更温和
         animationSpec = infiniteRepeatable(
-            animation = tween(500),
+            animation = tween(600),  // ✅ 改：从 500 改为 600，动画更平滑
             repeatMode = RepeatMode.Reverse
         ),
         label = "RecordScale"
     )
-    
+
     // 根据录音状态改变颜色
     val backgroundColor = if (isRecording) {
         MaterialTheme.colorScheme.error
@@ -84,23 +85,21 @@ fun RecordButton(
 
     Box(
         modifier = modifier
+            .size(48.dp)  // ✅ 改：移到最前面，确保固定大小
+            .scale(scale)
             .pointerInput(Unit) {
-                // 监听按压手势
                 detectTapGestures(
                     onPress = {
                         try {
                             currentOnStartRecording()
-                            awaitRelease() // 等待用户松开手指
+                            awaitRelease()
                         } finally {
                             currentOnStopRecording()
                         }
                     }
                 )
             }
-            .scale(scale)
-            .padding(4.dp)
-            .background(backgroundColor, CircleShape)
-            .size(48.dp),
+            .background(backgroundColor, RoundedCornerShape(12.dp)),  // ✅ 改：从 CircleShape 改为圆角方形，移除 padding
         contentAlignment = Alignment.Center
     ) {
         Icon(

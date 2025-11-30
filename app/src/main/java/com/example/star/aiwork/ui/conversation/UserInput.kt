@@ -99,6 +99,10 @@ import com.example.star.aiwork.R
 import com.example.star.aiwork.ui.FunctionalityNotAvailablePopup
 import com.example.star.aiwork.ui.components.BackPressHandler
 import com.example.star.aiwork.ui.theme.JetchatTheme
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.painterResource
 
 /**
  * 键盘类型枚举。
@@ -154,6 +158,8 @@ fun UserInput(
     onStartRecording: () -> Unit = {},
     onStopRecording: () -> Unit = {},
     isRecording: Boolean = false,
+    isTranscribing: Boolean = false,  // 新增
+    pendingTranscription: String = "",  // 新增
     textFieldValue: TextFieldValue = TextFieldValue(),
     onTextChanged: (TextFieldValue) -> Unit = {},
     selectedImageUri: Uri? = null,
@@ -224,6 +230,8 @@ fun UserInput(
             },
             focusState = currentInputSelector == InputSelector.NONE,
             isRecording = isRecording,
+            isTranscribing = isTranscribing,  // 新增
+            pendingTranscription = pendingTranscription,  // 新增
             onStartRecording = onStartRecording,
             onStopRecording = onStopRecording,
             onMessageSent = {
@@ -256,17 +264,17 @@ fun UserInput(
             currentSelector = currentInputSelector,
             onCloseRequested = dismissKeyboard,
             onTextAdded = {
-                 // 将表情插入到当前光标位置
-                 val currentText = textFieldValue.text
-                 val selection = textFieldValue.selection
-                 val newText = currentText.replaceRange(selection.start, selection.end, it)
-                 val newCursorPos = selection.start + it.length
-                 onTextChanged(
-                     TextFieldValue(
-                         text = newText,
-                         selection = TextRange(newCursorPos)
-                     )
-                 )
+                // 将表情插入到当前光标位置
+                val currentText = textFieldValue.text
+                val selection = textFieldValue.selection
+                val newText = currentText.replaceRange(selection.start, selection.end, it)
+                val newCursorPos = selection.start + it.length
+                onTextChanged(
+                    TextFieldValue(
+                        text = newText,
+                        selection = TextRange(newCursorPos)
+                    )
+                )
             }
         )
     }
@@ -342,6 +350,13 @@ fun NotAvailablePopup(onDismissed: () -> Unit) {
 
 /**
  * 用户输入文本框和主要操作按钮区域。
+ *
+ * ====== 修改说明 ======
+ * 1. 表情和图片按钮移入输入框内部左侧
+ * 2. 语音/发送按钮共用同一位置（外部右侧）
+ * 3. 无文本显示语音按钮，有文本切换为发送按钮
+ * 4. 布局切换时不会引起明显抖动
+ * =====================
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -357,124 +372,174 @@ private fun UserInputText(
     onStopRecording: () -> Unit,
     onMessageSent: () -> Unit,
     onEmojiClicked: () -> Unit,
+    isTranscribing: Boolean,  // 新增
+    pendingTranscription: String,  // 新增
     onImageClicked: () -> Unit
+
 ) {
     val a11yLabel = stringResource(id = R.string.textfield_desc)
-    
+
+    // ====== 修改开始：新布局结构 ======
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 64.dp, max = 200.dp), // 更改为 heightIn 以支持自动扩展
-        horizontalArrangement = Arrangement.End
+            .heightIn(min = 64.dp, max = 200.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        // 表情/键盘切换按钮
-        IconButton(
-            modifier = Modifier.align(Alignment.Bottom),
-            onClick = onEmojiClicked
-        ) {
-            Icon(
-                imageVector = if (keyboardShown) Icons.Filled.InsertEmoticon else Icons.Outlined.Mood,
-                contentDescription = stringResource(id = R.string.emoji_selector_desc),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        // 发送图片按钮
-        IconButton(
-            modifier = Modifier.align(Alignment.Bottom),
-            onClick = onImageClicked
-        ) {
-            Icon(
-                imageVector = Icons.Filled.InsertPhoto,
-                contentDescription = stringResource(R.string.attach_photo_desc),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        
+        // 输入框 - 包含内部按钮
         Surface(
             modifier = Modifier
                 .weight(1f)
-                .align(Alignment.CenterVertically)
-                .padding(top = 8.dp, bottom = 8.dp)
+                .padding(start = 16.dp, top = 8.dp, bottom = 8.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            border = androidx.compose.foundation.BorderStroke(
+                width = 1.5.dp,
+                color = MaterialTheme.colorScheme.primary
+            )
         ) {
-            Box(
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .align(Alignment.CenterVertically)
+                    .fillMaxWidth()
+                    .padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                var lastFocusState by remember { mutableStateOf(false) }
-                
-                // 基础文本输入框
-                BasicTextField(
-                    value = textFieldValue,
-                    onValueChange = { onTextChanged(it) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp)
-                        .align(Alignment.CenterStart)
-                        .onFocusChanged { state ->
-                            if (lastFocusState != state.isFocused) {
-                                onTextFieldFocused(state.isFocused)
-                            }
-                            lastFocusState = state.isFocused
-                        }
-                        .semantics {
-                            contentDescription = a11yLabel
-                            keyboardShownProperty = keyboardShown
-                        },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = keyboardType,
-                        imeAction = ImeAction.Default // 更改为 Default 允许换行
-                    ),
-                    maxLines = 4, // 限制最大行数，超过滚动
-                    cursorBrush = SolidColor(LocalContentColor.current),
-                    textStyle = LocalTextStyle.current.copy(color = LocalContentColor.current)
-                )
-
-                // 提示文本
-                if (textFieldValue.text.isEmpty() && !focusState) {
-                    Text(
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .padding(start = 16.dp),
-                        text = stringResource(id = R.string.textfield_hint),
-                        style = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current)
+                // 表情按钮 - 在输入框内部左侧
+                IconButton(
+                    onClick = onEmojiClicked,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = if (keyboardShown) Icons.Filled.InsertEmoticon else Icons.Outlined.Mood,
+                        contentDescription = stringResource(id = R.string.emoji_selector_desc),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
                     )
+                }
+
+                // 图片按钮 - 在输入框内部左侧
+                IconButton(
+                    onClick = onImageClicked,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.InsertPhoto,
+                        contentDescription = stringResource(R.string.attach_photo_desc),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                // 文本输入区域
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 8.dp)
+                ) {
+                    var lastFocusState by remember { mutableStateOf(false) }
+
+                    BasicTextField(
+                        value = textFieldValue,
+                        onValueChange = { onTextChanged(it) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { state ->
+                                if (lastFocusState != state.isFocused) {
+                                    onTextFieldFocused(state.isFocused)
+                                }
+                                lastFocusState = state.isFocused
+                            }
+                            .semantics {
+                                contentDescription = a11yLabel
+                                keyboardShownProperty = keyboardShown
+                            },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = keyboardType,
+                            imeAction = ImeAction.Default
+                        ),
+                        maxLines = 4,
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        textStyle = LocalTextStyle.current.copy(
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+
+                    // 提示文本
+                    if (textFieldValue.text.isEmpty() && !focusState) {
+                        Text(
+                            text = stringResource(id = R.string.textfield_hint),
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
+                        )
+                    }
                 }
             }
         }
 
-        // 发送按钮 - 仅当有文本时显示
-        if (textFieldValue.text.isNotEmpty()) {
-            Button(
-                modifier = Modifier
-                    .align(Alignment.Bottom)
-                    .height(36.dp)
-                    .padding(end = 8.dp, bottom = 12.dp), // 对齐调整
-                enabled = textFieldValue.text.isNotBlank(),
-                onClick = onMessageSent,
-                colors = ButtonDefaults.buttonColors(
-                    disabledContainerColor = Color.Transparent,
-                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+        // 语音/发送按钮切换 - 在输入框外部右侧，固定位置
+        // 语音/发送按钮 - 固定在外部右侧
+        Box(
+            modifier = Modifier
+                .padding(end = 16.dp, bottom = 8.dp)  // ✅ padding 在最外层
+                .size(48.dp)  // ✅ 固定大小 48dp
+                .background(
+                    color = if (textFieldValue.text.isNotEmpty()) {
+                        MaterialTheme.colorScheme.primary  // 有文字：蓝色
+                    } else if (isRecording) {
+                        MaterialTheme.colorScheme.error  // 录音中：红色
+                    } else {
+                        MaterialTheme.colorScheme.primary  // 默认：蓝色
+                    },
+                    shape = RoundedCornerShape(10.dp)  // ✅ 圆角 10dp（不要太大）
+                )
+                .then(
+                    if (textFieldValue.text.isNotEmpty()) {
+                        // 有文字时：普通点击
+                        Modifier.clickable(
+                            onClick = onMessageSent,
+                            enabled = textFieldValue.text.isNotBlank()
+                        )
+                    } else {
+                        // 无文字时：按住录音
+                        Modifier.pointerInput(Unit) {
+                            detectTapGestures(
+                                onPress = {
+                                    try {
+                                        onStartRecording()
+                                        awaitRelease()
+                                    } finally {
+                                        onStopRecording()
+                                    }
+                                }
+                            )
+                        }
+                    }
                 ),
-                contentPadding = PaddingValues(0.dp)
-            ) {
+            contentAlignment = Alignment.Center
+        ) {
+            // 图标切换
+            if (textFieldValue.text.isNotEmpty()) {
+                // 发送图标
                 Icon(
                     imageVector = Icons.AutoMirrored.Outlined.Send,
                     contentDescription = stringResource(R.string.send),
-                    modifier = Modifier.padding(horizontal = 16.dp)
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)  // ✅ 图标 22dp
+                )
+            } else {
+                // 麦克风图标
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_mic),
+                    contentDescription = stringResource(R.string.record_audio),
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)  // ✅ 图标统一 22dp
                 )
             }
         }
-
-        // 录音按钮 - 始终显示
-        RecordButton(
-            isRecording = isRecording,
-            onStartRecording = onStartRecording,
-            onStopRecording = onStopRecording,
-            modifier = Modifier.align(Alignment.Bottom).padding(end = 8.dp, bottom = 8.dp) // 对齐调整
-        )
     }
+    // ====== 修改结束 ======
 }
 
 /**

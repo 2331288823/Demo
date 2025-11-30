@@ -130,17 +130,18 @@ dependencies {
 
     // Serialization
     implementation(libs.kotlinx.serialization.json)
-    
+
     // OkHttp
     implementation(libs.okhttp3)
     implementation(libs.okhttp.logging)
 
     // Kotlin DateTime
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
-    
+
     // DataStore
     implementation(libs.androidx.datastore.preferences)
 
     // Coil
     implementation(libs.coil.kt.compose)
+
 }
