@@ -34,7 +34,10 @@ import com.example.star.aiwork.ui.ai.UIMessage
 import com.example.star.aiwork.ui.ai.UIMessagePart
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
@@ -291,7 +294,8 @@ class ConversationLogic(
 
                 // ✅ 无论流式还是非流式，都从 stream 收集响应
                 try {
-                    sendResult.stream.collect { delta ->
+                    // 通过 asCharTypingStream，把上游 chunk 拆成一个个字符，营造打字机效果
+                    sendResult.stream.asCharTypingStream(charDelayMs = 30L).collect { delta ->
                         fullResponse += delta
                         withContext(Dispatchers.Main) {
                             // ✅ 第一次收到内容时，移除加载状态
@@ -589,6 +593,24 @@ class ConversationLogic(
             )
             current = current.cause
             level++
+        }
+    }
+
+    /**
+     * 将上游的字符串流拆分为单字符流，并在字符之间插入短暂延迟，
+     * 实现更平滑的打字机效果。
+     */
+    private fun Flow<String>.asCharTypingStream(
+        charDelayMs: Long = 30L
+    ): Flow<String> = flow {
+        collect { chunk ->
+            if (chunk.isEmpty()) return@collect
+            for (ch in chunk) {
+                emit(ch.toString())
+                if (charDelayMs > 0) {
+                    delay(charDelayMs)
+                }
+            }
         }
     }
 }
