@@ -289,30 +289,46 @@ class ConversationLogic(
                 val UPDATE_INTERVAL_MS = 500L
 
                 // ✅ 无论流式还是非流式，都从 stream 收集响应
-                sendResult.stream.collect { delta ->
-                    fullResponse += delta
-                    withContext(Dispatchers.Main) {
-                        // ✅ 第一次收到内容时，移除加载状态
-                        if (delta.isNotEmpty()) {
-                            uiState.updateLastMessageLoadingState(false)
-                        }
-                        // ✅ 流式响应时逐字显示，非流式响应时一次性显示
-                        if (uiState.streamResponse) {
-                            uiState.appendToLastMessage(delta)
-                        }
+                try {
+                    sendResult.stream.collect { delta ->
+                        fullResponse += delta
+                        withContext(Dispatchers.Main) {
+                            // ✅ 第一次收到内容时，移除加载状态
+                            if (delta.isNotEmpty()) {
+                                uiState.updateLastMessageLoadingState(false)
+                            }
+                            // ✅ 流式响应时逐字显示，非流式响应时一次性显示
+                            if (uiState.streamResponse) {
+                                uiState.appendToLastMessage(delta)
+                            }
 
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastUpdateTime >= UPDATE_INTERVAL_MS) {
-                            persistenceGateway?.replaceLastAssistantMessage(
-                                sessionId,
-                                ChatDataItem(
-                                    role = MessageRole.ASSISTANT.name.lowercase(),
-                                    content = fullResponse
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastUpdateTime >= UPDATE_INTERVAL_MS) {
+                                persistenceGateway?.replaceLastAssistantMessage(
+                                    sessionId,
+                                    ChatDataItem(
+                                        role = MessageRole.ASSISTANT.name.lowercase(),
+                                        content = fullResponse
+                                    )
                                 )
-                            )
-                            lastUpdateTime = currentTime
+                                lastUpdateTime = currentTime
+                            }
                         }
                     }
+                } catch (streamError: Exception) {
+                    // ✅ 流收集过程中的错误也需要处理
+                    withContext(Dispatchers.Main) {
+                        uiState.updateLastMessageLoadingState(false)
+                        uiState.isGenerating = false
+                        // ✅ 如果最后一条消息是空的 AI 消息，移除它
+                        if (uiState.messages.isNotEmpty() && 
+                            uiState.messages[0].author == "AI" && 
+                            uiState.messages[0].content.isBlank()) {
+                            uiState.removeFirstMessage()
+                        }
+                    }
+                    // 重新抛出异常，让外层 catch 块处理
+                    throw streamError
                 }
                 
                 // ✅ 流式响应结束后，如果是非流式模式，一次性显示完整内容
@@ -396,17 +412,25 @@ class ConversationLogic(
                         // 确保 AI 消息容器不是加载状态
                         uiState.updateLastMessageLoadingState(false)
                         // 可以选择添加一条"已取消"的提示，或者直接保持原样
-                        if (uiState.messages.last().content.isBlank()) {
+                        if (uiState.messages.isNotEmpty() && uiState.messages[0].content.isBlank()) {
                             uiState.appendToLastMessage("[Cancelled]")
                         }
                     }
                     return@processMessage
                 }
                 withContext(Dispatchers.Main) {
+                    // ✅ 确保停止加载状态
+                    uiState.updateLastMessageLoadingState(false)
+                    uiState.isGenerating = false
+                    // ✅ 如果最后一条消息是空的 AI 消息，移除它或更新它
+                    if (uiState.messages.isNotEmpty() && 
+                        uiState.messages[0].author == "AI" && 
+                        uiState.messages[0].content.isBlank()) {
+                        uiState.removeFirstMessage()
+                    }
                     uiState.addMessage(
                         Message("System", "Error: ${e.message}", timeNow)
                     )
-                    uiState.isGenerating = false
                 }
                 e.printStackTrace()
             }

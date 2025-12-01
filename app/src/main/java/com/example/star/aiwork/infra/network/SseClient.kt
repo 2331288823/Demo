@@ -12,12 +12,15 @@ import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedReader
+import java.io.EOFException
 import java.io.IOException
 import java.io.InputStreamReader
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.nio.charset.Charset
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
@@ -159,6 +162,12 @@ private fun mapIOException(e: IOException): NetworkException {
         is SocketTimeoutException -> NetworkException.TimeoutException(cause = e)
         is UnknownHostException -> NetworkException.ConnectionException(cause = e)
         is ConnectException -> NetworkException.ConnectionException(cause = e)
+        is SSLHandshakeException -> NetworkException.ConnectionException(message = "SSL 握手失败，连接已关闭", cause = e)
+        is SSLException -> NetworkException.ConnectionException(message = "SSL 连接失败", cause = e)
+        is EOFException -> {
+            // EOFException 通常表示连接被意外关闭（如断网、服务器关闭连接等）
+            NetworkException.ConnectionException(message = "连接已关闭", cause = e)
+        }
         else -> NetworkException.UnknownException(message = "SSE 读取失败", cause = e)
     }
 }
