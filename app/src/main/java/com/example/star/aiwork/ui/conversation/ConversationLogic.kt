@@ -18,6 +18,7 @@ package com.example.star.aiwork.ui.conversation
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.example.star.aiwork.domain.TextGenerationParams
 import com.example.star.aiwork.domain.model.ChatDataItem
 import com.example.star.aiwork.domain.model.MessageRole
@@ -316,18 +317,42 @@ class ConversationLogic(
                         }
                     }
                 } catch (streamError: Exception) {
+                    // 如果是取消相关的异常（包括内部的 StreamResetException），直接交给外层取消逻辑处理
+                    if (streamError is CancellationException || isCancellationRelatedException(streamError)) {
+                        throw streamError
+                    }
+
+                    // ✅ 打印异常链，便于分析实际的网络错误类型
+                    logThrowableChain("ConversationLogic", "streamError during collect", streamError)
+
                     // ✅ 流收集过程中的错误也需要处理
                     withContext(Dispatchers.Main) {
                         uiState.updateLastMessageLoadingState(false)
                         uiState.isGenerating = false
-                        // ✅ 如果最后一条消息是空的 AI 消息，移除它
-                        if (uiState.messages.isNotEmpty() && 
-                            uiState.messages[0].author == "AI" && 
-                            uiState.messages[0].content.isBlank()) {
-                            uiState.removeFirstMessage()
+                        
+                        // ✅ 如果已经收到部分内容，保留它并添加提示
+                        if (fullResponse.isNotEmpty()) {
+                            // 在已收到的内容后添加中断提示
+                            val errorHint = when {
+                                streamError is com.example.star.aiwork.data.model.LlmError.NetworkError -> 
+                                    "\n\n[网络连接中断，请检查网络]"
+                                streamError.cause is java.net.SocketException ||
+                                streamError.cause is java.io.EOFException ||
+                                streamError.cause is javax.net.ssl.SSLException -> 
+                                    "\n\n[网络连接中断， 请检查网络]"
+                                else -> "\n\n[响应中断]"
+                            }
+                            uiState.appendToLastMessage(errorHint)
+                        } else {
+                            // ✅ 如果完全没有收到内容，移除空消息
+                            if (uiState.messages.isNotEmpty() && 
+                                uiState.messages[0].author == "AI" && 
+                                uiState.messages[0].content.isBlank()) {
+                                uiState.removeFirstMessage()
+                            }
                         }
                     }
-                    // 重新抛出异常，让外层 catch 块处理
+                    // 重新抛出异常，让外层 catch 块处理（如果没有收到内容才显示错误消息）
                     throw streamError
                 }
                 
@@ -428,8 +453,28 @@ class ConversationLogic(
                         uiState.messages[0].content.isBlank()) {
                         uiState.removeFirstMessage()
                     }
+                    
+                    // ✅ 生成更友好的错误消息
+                    val errorMessage = when {
+                        // data/remote 层会把超时也映射成 NetworkError("请求超时")
+                        e is com.example.star.aiwork.data.model.LlmError.NetworkError -> {
+                            // 如果 message 里带有“超时”字样，则提示为请求超时
+                            if (e.message?.contains("超时") == true ||
+                                e.message?.contains("timeout", ignoreCase = true) == true
+                            ) {
+                                "请求超时：${e.message ?: "服务器响应超时"}"
+                            } else {
+                                "网络连接失败：${e.message ?: "无法连接到服务器"}"
+                            }
+                        }
+                        e.message?.contains("网络", ignoreCase = true) == true ||
+                        e.message?.contains("connection", ignoreCase = true) == true -> 
+                            "网络错误：${e.message}"
+                        else -> "错误：${e.message ?: "未知错误"}"
+                    }
+                    
                     uiState.addMessage(
-                        Message("System", "Error: ${e.message}", timeNow)
+                        Message("System", errorMessage, timeNow)
                     )
                 }
                 e.printStackTrace()
@@ -462,26 +507,27 @@ class ConversationLogic(
     
     /**
      * 检查异常是否是取消操作相关的。
-     * 包括CancellationException和包含StreamResetException的NetworkException。
+     * 现在只有真正的 CancellationException 才是取消，其他 NetworkException 都是网络错误。
      */
     private fun isCancellationRelatedException(e: Exception): Boolean {
-        // 检查是否是NetworkException且包含取消原因
-        if (e is com.example.star.aiwork.infra.network.NetworkException) {
-            var cause: Throwable? = e.cause
-            while (cause != null) {
-                val message = cause.message?.lowercase() ?: ""
-                if (message.contains("cancel", ignoreCase = true) ||
-                    message.contains("stream was reset: cancel", ignoreCase = true) ||
-                    message.contains("stream was reset", ignoreCase = true)) {
-                    return true
-                }
-                // 检查是否是StreamResetException
-                if (cause.javaClass.simpleName == "StreamResetException") {
-                    return true
-                }
-                cause = cause.cause
-            }
-        }
+        // 现在只有主动取消才会抛出 CancellationException
+        // NetworkException 都是网络相关的错误，不再当作取消处理
         return false
+    }
+
+    /**
+     * 打印异常及其 cause 链，帮助分析实际的底层错误类型（例如具体的网络异常）。
+     */
+    private fun logThrowableChain(tag: String, prefix: String, throwable: Throwable) {
+        var current: Throwable? = throwable
+        var level = 0
+        while (current != null && level < 6) {
+            Log.e(
+                tag,
+                "$prefix | level=$level type=${current.javaClass.name}, message=${current.message}"
+            )
+            current = current.cause
+            level++
+        }
     }
 }

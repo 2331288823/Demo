@@ -33,6 +33,7 @@ class SseClient(
 ) {
 
     private val activeCalls = ConcurrentHashMap<String, Call>()
+    private val activeCancelledTasks = ConcurrentHashMap<String, Boolean>()
 
     /**
      * 根据请求创建 SSE 流。
@@ -67,8 +68,8 @@ class SseClient(
                 }
             }
         } catch (io: IOException) {
-            // 检查是否是取消操作导致的异常
-            if (isCancellationException(io)) {
+            // 检查是否是主动取消导致的异常
+            if (activeCancelledTasks.remove(taskId) == true) {
                 throw CancellationException("SSE stream was cancelled", io)
             }
             throw mapIOException(io)
@@ -77,6 +78,7 @@ class SseClient(
             throw ce
         } finally {
             activeCalls.remove(taskId)
+            activeCancelledTasks.remove(taskId)  // 清理标记
         }
     }.flowOn(Dispatchers.IO)
 
@@ -85,6 +87,7 @@ class SseClient(
      */
     fun cancel(taskId: String) {
         try {
+            activeCancelledTasks[taskId] = true  // 标记为主动取消
             activeCalls.remove(taskId)?.cancel()
         } catch (e: Exception) {
             // 取消操作应该静默处理，即使失败也不应该抛出异常
@@ -114,50 +117,14 @@ class SseClient(
     }
 }
 
-/**
- * 检查异常是否是取消操作导致的。
- * 当用户取消请求时，OkHttp会抛出StreamResetException，错误码为CANCEL。
- * 由于StreamResetException是OkHttp的内部API，我们通过类名和消息来检测。
- */
-private fun isCancellationException(e: Throwable): Boolean {
-    var cause: Throwable? = e
-    while (cause != null) {
-        val className = cause.javaClass.name
-        val message = cause.message?.lowercase() ?: ""
-        
-        // 检查是否是StreamResetException（OkHttp内部类）
-        if (className.contains("StreamResetException", ignoreCase = true)) {
-            // 检查异常消息是否包含"cancel"
-            if (message.contains("cancel", ignoreCase = true) || 
-                message.contains("stream was reset: cancel", ignoreCase = true)) {
-                return true
-            }
-            // 尝试通过反射检查errorCode
-            try {
-                val errorCodeField = cause.javaClass.getDeclaredField("errorCode")
-                errorCodeField.isAccessible = true
-                val errorCode = errorCodeField.getInt(cause)
-                // HTTP/2 CANCEL error code is 0x8
-                if (errorCode == 0x8) {
-                    return true
-                }
-            } catch (ex: Exception) {
-                // 如果反射失败，继续使用消息检查
-            }
-        }
-        
-        // 也检查异常消息中是否包含取消相关的关键词
-        if (message.contains("stream was reset: cancel", ignoreCase = true) ||
-            (message.contains("stream was reset") && message.contains("cancel", ignoreCase = true))) {
-            return true
-        }
-        
-        cause = cause.cause
-    }
-    return false
-}
 
 private fun mapIOException(e: IOException): NetworkException {
+    // 检查是否是 StreamResetException（OkHttp 内部类，表示连接被重置）
+    val className = e.javaClass.name
+    if (className.contains("StreamResetException", ignoreCase = true)) {
+        return NetworkException.ConnectionException(message = "连接被重置", cause = e)
+    }
+
     return when (e) {
         is SocketTimeoutException -> NetworkException.TimeoutException(cause = e)
         is UnknownHostException -> NetworkException.ConnectionException(cause = e)
