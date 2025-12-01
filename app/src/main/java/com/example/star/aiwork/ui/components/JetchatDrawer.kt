@@ -161,7 +161,7 @@ fun JetchatDrawerContent(
         DividerItem()
         NewChatItem(onNewChatClicked = onNewChatClicked)
         DividerItem(modifier = Modifier.padding(horizontal = 30.dp))
-        DrawerItemHeader("Agents (Prompts)")
+        DrawerItemHeader("角色市场")
         agents.forEach { agent ->
             AgentItem(
                 agent = agent,
@@ -171,18 +171,18 @@ fun JetchatDrawerContent(
         }
 
         DividerItem(modifier = Modifier.padding(horizontal = 30.dp))
-        DrawerItemHeader("Knowledge Base")
+        DrawerItemHeader("知识库")
         KnowledgeItem(
-            "Import PDF",
+            "PDF 导入",
             false
         ) {
             onImportPdfClicked()
         }
 
         DividerItem(modifier = Modifier.padding(horizontal = 30.dp))
-        DrawerItemHeader("Settings")
+        DrawerItemHeader("设置")
         SettingsItem(
-            "Model Selection & API Settings",
+            "模型选择",
             selectedMenu == meProfile.userId,
         ) {
             onProfileClicked(meProfile.userId)
@@ -203,7 +203,7 @@ fun JetchatDrawerContent(
         
         // 显示置顶会话区域（在 Chats 区域上方）
         if (pinnedSessions.isNotEmpty()) {
-            DrawerItemHeader("Pinned Chats")
+            DrawerItemHeader("置顶的聊天")
             pinnedSessions.forEach { session ->
                 ChatItem(
                     text = session.name,
@@ -225,7 +225,7 @@ fun JetchatDrawerContent(
         
         // 显示非置顶会话区域
         if (unpinnedSessions.isNotEmpty()) {
-            DrawerItemHeader("Chats")
+            DrawerItemHeader("聊天")
             unpinnedSessions.forEach { session ->
                 ChatItem(
                     text = session.name,
@@ -240,7 +240,7 @@ fun JetchatDrawerContent(
             }
         } else if (pinnedSessions.isEmpty()) {
             // 如果没有任何会话，仍然显示 "Chats" 标题
-            DrawerItemHeader("Chats")
+            DrawerItemHeader("聊天")
         }
     }
 }
@@ -308,7 +308,7 @@ private fun NewChatItem(onNewChatClicked: () -> Unit) {
             contentDescription = null,
         )
         Text(
-            "New Chat",
+            "新聊天",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(start = 12.dp),

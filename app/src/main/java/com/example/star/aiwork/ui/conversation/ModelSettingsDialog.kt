@@ -36,7 +36,7 @@ fun ModelSettingsDialog(
         onDismissRequest = onDismissRequest,
         title = {
             Text(
-                text = "Model Settings",
+                text = "模型参数设置",
                 style = MaterialTheme.typography.headlineSmall
             )
         },
@@ -44,7 +44,7 @@ fun ModelSettingsDialog(
             Column(modifier = Modifier.fillMaxWidth()) {
                 // 温度设置滑块
                 Text(
-                    text = "Temperature",
+                    text = "温度",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -54,7 +54,7 @@ fun ModelSettingsDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "Precise",
+                        text = "精确",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -64,7 +64,7 @@ fun ModelSettingsDialog(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "Creative",
+                        text = "创意",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -81,7 +81,7 @@ fun ModelSettingsDialog(
 
                 // 最大 Token 数设置滑块
                 Text(
-                    text = "Max Tokens",
+                    text = "最大 Tokens",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -123,7 +123,7 @@ fun ModelSettingsDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "Stream Response",
+                        text = "流式输出",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -189,7 +189,7 @@ fun ModelSettingsDialog(
             TextButton(
                 onClick = onDismissRequest
             ) {
-                Text("Done")
+                Text("确认")
             }
         },
         containerColor = MaterialTheme.colorScheme.surface,
