@@ -1,6 +1,8 @@
 package com.example.star.aiwork.infra.network
 
+import android.util.Log
 import com.example.star.aiwork.infra.util.await
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -10,12 +12,15 @@ import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedReader
+import java.io.EOFException
 import java.io.IOException
 import java.io.InputStreamReader
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.nio.charset.Charset
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
@@ -28,6 +33,7 @@ class SseClient(
 ) {
 
     private val activeCalls = ConcurrentHashMap<String, Call>()
+    private val activeCancelledTasks = ConcurrentHashMap<String, Boolean>()
 
     /**
      * 根据请求创建 SSE 流。
@@ -62,9 +68,17 @@ class SseClient(
                 }
             }
         } catch (io: IOException) {
+            // 检查是否是主动取消导致的异常
+            if (activeCancelledTasks.remove(taskId) == true) {
+                throw CancellationException("SSE stream was cancelled", io)
+            }
             throw mapIOException(io)
+        } catch (ce: CancellationException) {
+            // 重新抛出取消异常，不转换为NetworkException
+            throw ce
         } finally {
             activeCalls.remove(taskId)
+            activeCancelledTasks.remove(taskId)  // 清理标记
         }
     }.flowOn(Dispatchers.IO)
 
@@ -72,7 +86,14 @@ class SseClient(
      * 取消指定任务。
      */
     fun cancel(taskId: String) {
-        activeCalls.remove(taskId)?.cancel()
+        try {
+            activeCancelledTasks[taskId] = true  // 标记为主动取消
+            activeCalls.remove(taskId)?.cancel()
+        } catch (e: Exception) {
+            // 取消操作应该静默处理，即使失败也不应该抛出异常
+            // Call.cancel() 通常不会抛出异常，但在某些边缘情况下可能会
+            Log.d("SseClient", "Cancel call failed for taskId: $taskId", e)
+        }
     }
 
     /**
@@ -96,11 +117,24 @@ class SseClient(
     }
 }
 
+
 private fun mapIOException(e: IOException): NetworkException {
+    // 检查是否是 StreamResetException（OkHttp 内部类，表示连接被重置）
+    val className = e.javaClass.name
+    if (className.contains("StreamResetException", ignoreCase = true)) {
+        return NetworkException.ConnectionException(message = "连接被重置", cause = e)
+    }
+
     return when (e) {
         is SocketTimeoutException -> NetworkException.TimeoutException(cause = e)
         is UnknownHostException -> NetworkException.ConnectionException(cause = e)
         is ConnectException -> NetworkException.ConnectionException(cause = e)
+        is SSLHandshakeException -> NetworkException.ConnectionException(message = "SSL 握手失败，连接已关闭", cause = e)
+        is SSLException -> NetworkException.ConnectionException(message = "SSL 连接失败", cause = e)
+        is EOFException -> {
+            // EOFException 通常表示连接被意外关闭（如断网、服务器关闭连接等）
+            NetworkException.ConnectionException(message = "连接已关闭", cause = e)
+        }
         else -> NetworkException.UnknownException(message = "SSE 读取失败", cause = e)
     }
 }
