@@ -13,6 +13,7 @@ import com.example.star.aiwork.infra.network.NetworkException
 import com.example.star.aiwork.infra.network.SseClient
 import com.example.star.aiwork.infra.network.defaultOkHttpClient
 import com.example.star.aiwork.infra.util.json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.filter
@@ -59,7 +60,13 @@ class StreamingChatRemoteDataSource(
         return sseClient.createStream(request, openAiConfig.taskId, client)
             .filter { it.isNotBlank() && it != DONE_TOKEN }
             .mapNotNull { payload -> parseChunk(payload) }
-            .catch { throwable -> throw throwable.toLlmError() }
+            .catch { throwable ->
+                // 取消异常不应该转换为LlmError，应该重新抛出以便上层正确处理
+                if (throwable is CancellationException) {
+                    throw throwable
+                }
+                throw throwable.toLlmError()
+            }
     }
 
     override suspend fun cancelStreaming(taskId: String) {
@@ -210,9 +217,12 @@ class StreamingChatRemoteDataSource(
 
     private fun clientFor(endpoint: OpenAiEndpoint): OkHttpClient {
         return clientCache.getOrPut(endpoint.providerId) {
+            // ✅ 保留 defaultOkHttpClient 的 connectTimeout 配置
+            // 这样修改 HttpClient.kt 中的 DEFAULT_CONNECT_TIMEOUT_MS 会生效
             defaultOkHttpClient().newBuilder()
                 .applyProxy(endpoint.proxy)
                 .readTimeout(0, TimeUnit.MILLISECONDS)
+                // connectTimeout 和 writeTimeout 保持 defaultOkHttpClient 的默认值
                 .build()
         }
     }

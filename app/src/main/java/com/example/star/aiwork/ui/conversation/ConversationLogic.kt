@@ -18,6 +18,7 @@ package com.example.star.aiwork.ui.conversation
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.example.star.aiwork.domain.TextGenerationParams
 import com.example.star.aiwork.domain.model.ChatDataItem
 import com.example.star.aiwork.domain.model.MessageRole
@@ -289,30 +290,60 @@ class ConversationLogic(
                 val UPDATE_INTERVAL_MS = 500L
 
                 // ✅ 无论流式还是非流式，都从 stream 收集响应
-                sendResult.stream.collect { delta ->
-                    fullResponse += delta
-                    withContext(Dispatchers.Main) {
-                        // ✅ 第一次收到内容时，移除加载状态
-                        if (delta.isNotEmpty()) {
-                            uiState.updateLastMessageLoadingState(false)
-                        }
-                        // ✅ 流式响应时逐字显示，非流式响应时一次性显示
-                        if (uiState.streamResponse) {
-                            uiState.appendToLastMessage(delta)
-                        }
+                try {
+                    sendResult.stream.collect { delta ->
+                        fullResponse += delta
+                        withContext(Dispatchers.Main) {
+                            // ✅ 第一次收到内容时，移除加载状态
+                            if (delta.isNotEmpty()) {
+                                uiState.updateLastMessageLoadingState(false)
+                            }
+                            // ✅ 流式响应时逐字显示，非流式响应时一次性显示
+                            if (uiState.streamResponse) {
+                                uiState.appendToLastMessage(delta)
+                            }
 
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastUpdateTime >= UPDATE_INTERVAL_MS) {
-                            persistenceGateway?.replaceLastAssistantMessage(
-                                sessionId,
-                                ChatDataItem(
-                                    role = MessageRole.ASSISTANT.name.lowercase(),
-                                    content = fullResponse
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastUpdateTime >= UPDATE_INTERVAL_MS) {
+                                persistenceGateway?.replaceLastAssistantMessage(
+                                    sessionId,
+                                    ChatDataItem(
+                                        role = MessageRole.ASSISTANT.name.lowercase(),
+                                        content = fullResponse
+                                    )
                                 )
-                            )
-                            lastUpdateTime = currentTime
+                                lastUpdateTime = currentTime
+                            }
                         }
                     }
+                } catch (streamError: Exception) {
+                    // 如果是取消相关的异常（包括内部的 StreamResetException），直接交给外层取消逻辑处理
+                    if (streamError is CancellationException || isCancellationRelatedException(streamError)) {
+                        throw streamError
+                    }
+
+                    // ✅ 打印异常链，便于分析实际的网络错误类型
+                    logThrowableChain("ConversationLogic", "streamError during collect", streamError)
+
+                    // ✅ 流收集过程中的错误也需要处理
+                    withContext(Dispatchers.Main) {
+                        uiState.updateLastMessageLoadingState(false)
+                        uiState.isGenerating = false
+                        
+                        // ✅ 如果已经收到部分内容，保留它
+                        if (fullResponse.isNotEmpty()) {
+                            // 直接保留已收到的内容，不添加中断提示
+                        } else {
+                            // ✅ 如果完全没有收到内容，移除空消息
+                            if (uiState.messages.isNotEmpty() && 
+                                uiState.messages[0].author == "AI" && 
+                                uiState.messages[0].content.isBlank()) {
+                                uiState.removeFirstMessage()
+                            }
+                        }
+                    }
+                    // 重新抛出异常，让外层 catch 块处理（如果没有收到内容才显示错误消息）
+                    throw streamError
                 }
                 
                 // ✅ 流式响应结束后，如果是非流式模式，一次性显示完整内容
@@ -388,14 +419,15 @@ class ConversationLogic(
                 }
 
             } catch (e: Exception) {
-                if (e is CancellationException) {
+                // 检查是否是取消操作（包括CancellationException和包含取消原因的NetworkException）
+                if (e is CancellationException || isCancellationRelatedException(e)) {
                     // 流被取消是正常操作，不需要显示错误
                     withContext(Dispatchers.Main) {
                         uiState.isGenerating = false
                         // 确保 AI 消息容器不是加载状态
                         uiState.updateLastMessageLoadingState(false)
-                        // 可以选择添加一条“已取消”的提示，或者直接保持原样
-                        if (uiState.messages.last().content.isBlank()) {
+                        // 可以选择添加一条"已取消"的提示，或者直接保持原样
+                        if (uiState.messages.isNotEmpty() && uiState.messages[0].content.isBlank()) {
                             uiState.appendToLastMessage("[Cancelled]")
                         }
                     }
@@ -431,9 +463,23 @@ class ConversationLogic(
                 }
 
                 withContext(Dispatchers.Main) {
+                    // ✅ 确保停止加载状态
+                    uiState.updateLastMessageLoadingState(false)
+                    uiState.isGenerating = false
+                    // ✅ 如果最后一条消息是空的 AI 消息，移除它或更新它
+                    if (uiState.messages.isNotEmpty() && 
+                        uiState.messages[0].author == "AI" && 
+                        uiState.messages[0].content.isBlank()) {
+                        uiState.removeFirstMessage()
+                    }
+                    
+                    // ✅ 生成格式化的错误消息，包含错误类型和建议
+                    val errorMessage = formatErrorMessage(e)
+
                     uiState.addMessage(
-                        Message("System", "Error: ${e.message}", timeNow)
+                        Message("System", errorMessage, timeNow)
                     )
+
                     uiState.isGenerating = false
                     // 确保 AI 消息容器不是加载状态
                     uiState.updateLastMessageLoadingState(false)
@@ -464,5 +510,85 @@ class ConversationLogic(
             role = message.role.name.lowercase(),
             content = builder.toString()
         )
+    }
+    
+    /**
+     * 格式化错误消息，包含错误类型和解决建议
+     */
+    private fun formatErrorMessage(error: Exception): String {
+        return when (error) {
+            is com.example.star.aiwork.data.model.LlmError.NetworkError -> {
+                formatNetworkError(error)
+            }
+            is com.example.star.aiwork.data.model.LlmError.AuthenticationError -> {
+                "API密钥无效或已过期，请检查您的API密钥"
+            }
+            is com.example.star.aiwork.data.model.LlmError.RateLimitError -> {
+                "请求频率过高，请稍后再试"
+            }
+            is com.example.star.aiwork.data.model.LlmError.ServerError -> {
+                "服务器错误，请稍后重试，或联系技术支持"
+            }
+            is com.example.star.aiwork.data.model.LlmError.RequestError -> {
+                "请求参数错误：${error.message ?: "请求格式或参数有误"}\n\n请检查输入内容，或联系技术支持"
+            }
+            is com.example.star.aiwork.data.model.LlmError.UnknownError -> {
+                "发生了意外错误，请重试操作，如问题持续请联系技术支持"
+            }
+            else -> {
+                // 处理其他类型的异常
+                if (error.message?.contains("网络", ignoreCase = true) == true ||
+                    error.message?.contains("connection", ignoreCase = true) == true) {
+                    "网络错误，请检查网络连接后重试"
+                } else {
+                    "系统错误，请重试操作，如问题持续请联系技术支持"
+                }
+            }
+        }
+    }
+
+    /**
+     * 格式化网络错误信息
+     */
+    private fun formatNetworkError(error: com.example.star.aiwork.data.model.LlmError.NetworkError): String {
+        val message = error.message ?: "网络连接失败"
+
+        return when {
+            message.contains("超时") || message.contains("timeout", ignoreCase = true) -> {
+                "网络超时，请检查网络连接，或稍后重试"
+            }
+            message.contains("连接") || message.contains("connection", ignoreCase = true) -> {
+                "网络错误，请检查网络连接，或尝试切换网络"
+            }
+            else -> {
+                "网络错误，请检查网络连接后重试"
+            }
+        }
+    }
+
+    /**
+     * 检查异常是否是取消操作相关的。
+     * 现在只有真正的 CancellationException 才是取消，其他 NetworkException 都是网络错误。
+     */
+    private fun isCancellationRelatedException(e: Exception): Boolean {
+        // 现在只有主动取消才会抛出 CancellationException
+        // NetworkException 都是网络相关的错误，不再当作取消处理
+        return false
+    }
+
+    /**
+     * 打印异常及其 cause 链，帮助分析实际的底层错误类型（例如具体的网络异常）。
+     */
+    private fun logThrowableChain(tag: String, prefix: String, throwable: Throwable) {
+        var current: Throwable? = throwable
+        var level = 0
+        while (current != null && level < 6) {
+            Log.e(
+                tag,
+                "$prefix | level=$level type=${current.javaClass.name}, message=${current.message}"
+            )
+            current = current.cause
+            level++
+        }
     }
 }

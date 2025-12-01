@@ -6,10 +6,13 @@ import kotlinx.coroutines.withContext
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.EOFException
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
 
 /**
  * HTTP 客户端接口，封装底层实现细节，提供统一的异常语义。
@@ -76,6 +79,12 @@ class OkHttpHttpClient(
             throw NetworkException.ConnectionException(cause = connect)
         } catch (connect: ConnectException) {
             throw NetworkException.ConnectionException(cause = connect)
+        } catch (ssl: SSLHandshakeException) {
+            throw NetworkException.ConnectionException(message = "SSL 握手失败，连接已关闭", cause = ssl)
+        } catch (ssl: SSLException) {
+            throw NetworkException.ConnectionException(message = "SSL 连接失败", cause = ssl)
+        } catch (eof: EOFException) {
+            throw NetworkException.ConnectionException(message = "连接已关闭", cause = eof)
         } catch (io: IOException) {
             throw NetworkException.UnknownException(message = "网络读写异常", cause = io)
         } catch (e: NetworkException) {
@@ -90,10 +99,11 @@ class OkHttpHttpClient(
  * 提供给 Infra 默认使用的 OkHttpClient。
  */
 fun defaultOkHttpClient(): OkHttpClient = OkHttpClient.Builder()
-    .connectTimeout(DEFAULT_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+    .connectTimeout(DEFAULT_CONNECT_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
     .readTimeout(DEFAULT_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
     .writeTimeout(DEFAULT_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
     .build()
 
 private const val DEFAULT_TIMEOUT_MS = 30_000L
+private const val DEFAULT_CONNECT_TIMEOUT_MS = 5_000L
 
