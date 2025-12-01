@@ -295,7 +295,7 @@ class ConversationLogic(
                 // ✅ 无论流式还是非流式，都从 stream 收集响应
                 try {
                     // 通过 asCharTypingStream，把上游 chunk 拆成一个个字符，营造打字机效果
-                    sendResult.stream.asCharTypingStream(charDelayMs = 20L).collect { delta ->
+                    sendResult.stream.asCharTypingStream(charDelayMs = 30L).collect { delta ->
                         fullResponse += delta
                         withContext(Dispatchers.Main) {
                             // ✅ 第一次收到内容时，移除加载状态
