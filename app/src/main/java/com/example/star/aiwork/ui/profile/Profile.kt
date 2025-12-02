@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.example.star.aiwork.data.provider.GoogleProvider
 import com.example.star.aiwork.data.provider.OllamaProvider
 import com.example.star.aiwork.data.provider.OpenAIProvider
 import com.example.star.aiwork.domain.model.ProviderSetting
@@ -72,6 +73,12 @@ fun ProfileScreen(
                         apiKey = "ollama",
                         baseUrl = "http://localhost:11434",
                         chatCompletionsPath = "/api/chat"
+                    )
+                    "Google" -> ProviderSetting.Google(
+                        id = UUID.randomUUID().toString(),
+                        name = "New Google",
+                        apiKey = "AIzaSyCvWpRF0mGFVtcWtqX_3ed2YwXcdC1X5yM",
+                        baseUrl = "https://generativelanguage.googleapis.com/v1beta"
                     )
                     else -> null
                 }
@@ -145,6 +152,11 @@ fun AddProviderDialog(
                 ListItem(
                     headlineContent = { Text("Ollama (Local)") },
                     modifier = Modifier.clickable { onAdd("Ollama") }
+                )
+                HorizontalDivider()
+                ListItem(
+                    headlineContent = { Text("Google (Gemini)") },
+                    modifier = Modifier.clickable { onAdd("Google") }
                 )
             }
         },
@@ -298,7 +310,8 @@ fun ProviderCard(
                                         val tempSetting = when (provider) {
                                             is ProviderSetting.OpenAI -> provider.copy(apiKey = apiKey, baseUrl = baseUrl)
                                             is ProviderSetting.Ollama -> provider.copy(apiKey = apiKey, baseUrl = baseUrl)
-                                            else -> provider
+                                            is ProviderSetting.Google -> provider.copy(apiKey = apiKey, baseUrl = baseUrl)
+                                            is ProviderSetting.Claude -> provider.copy(apiKey = apiKey, baseUrl = baseUrl)
                                         }
 
                                         if (tempSetting is ProviderSetting.OpenAI) {
@@ -315,6 +328,13 @@ fun ProviderCard(
                                             
                                             onUpdate(tempSetting.copy(name = name, models = models))
                                             Toast.makeText(context, "Connected! Found ${models.size} models.", Toast.LENGTH_SHORT).show()
+                                        } else if (tempSetting is ProviderSetting.Google) {
+                                            val client = OkHttpClient()
+                                            val googleProvider = GoogleProvider(client)
+                                            val models = googleProvider.listModels(tempSetting)
+                                            
+                                            onUpdate(tempSetting.copy(name = name, models = models))
+                                            Toast.makeText(context, "Connected! Added Gemini models.", Toast.LENGTH_SHORT).show()
                                         } else {
                                              Toast.makeText(context, "Test not supported for this type yet.", Toast.LENGTH_SHORT).show()
                                         }

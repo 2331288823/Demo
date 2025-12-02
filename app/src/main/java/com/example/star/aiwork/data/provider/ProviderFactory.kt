@@ -9,6 +9,7 @@ object ProviderFactory {
         return when (setting) {
             is ProviderSetting.OpenAI -> OpenAIProvider(client)
             is ProviderSetting.Ollama -> OllamaProvider(client)
+            is ProviderSetting.Google -> GoogleProvider(client)
             else -> OpenAIProvider(client)
         }
     }
