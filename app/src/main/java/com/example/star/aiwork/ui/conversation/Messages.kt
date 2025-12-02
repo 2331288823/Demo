@@ -109,7 +109,8 @@ fun Messages(
     providerSetting: ProviderSetting? = null,
     model: Model? = null,
     retrieveKnowledge: suspend (String) -> String = { "" },
-    scope: CoroutineScope? = null
+    scope: CoroutineScope? = null,
+    isGenerating: Boolean = false
 ) {
     val coroutineScope = scope ?: rememberCoroutineScope()
     Box(modifier = modifier) {
@@ -178,7 +179,8 @@ fun Messages(
                         },
                         onMoreClick = {
                             // TODO: 实现更多操作功能
-                        }
+                        },
+                        isGenerating = isGenerating
                     )
                 }
             }
@@ -223,7 +225,8 @@ fun Message(
     onRegenerateClick: () -> Unit = {},
     onThumbUpClick: () -> Unit = {},
     onThumbDownClick: () -> Unit = {},
-    onMoreClick: () -> Unit = {}
+    onMoreClick: () -> Unit = {},
+    isGenerating: Boolean = false
 ) {
     val borderColor = if (isUserMe) {
         MaterialTheme.colorScheme.primary
@@ -271,6 +274,7 @@ fun Message(
             onThumbUpClick = onThumbUpClick,
             onThumbDownClick = onThumbDownClick,
             onMoreClick = onMoreClick,
+            isGenerating = isGenerating,
             modifier = Modifier
                 .padding(end = if (isUserMe) 16.dp else 16.dp)
                 .widthIn(max = 300.dp)
@@ -294,7 +298,8 @@ fun AuthorAndTextMessage(
     onRegenerateClick: () -> Unit = {},
     onThumbUpClick: () -> Unit = {},
     onThumbDownClick: () -> Unit = {},
-    onMoreClick: () -> Unit = {}
+    onMoreClick: () -> Unit = {},
+    isGenerating: Boolean = false
 ) {
     Column(modifier = modifier) {
         if (isLastMessageByAuthor && !isUserMe) {
@@ -304,7 +309,8 @@ fun AuthorAndTextMessage(
         
         // 在消息气泡底部显示操作按钮（水平并排）
         // 排列顺序：复制 + 点赞 + 点踩 + 重新生成 + 更多操作
-        if (!isUserMe && msg.author != "System") {
+        // 当 isGenerating 为 true 时，不显示功能栏
+        if (!isUserMe && msg.author != "System" && !isGenerating) {
             val clipboardManager = LocalClipboardManager.current
             val showCopyButton = isPureTextContent(msg.content) && msg.content.isNotEmpty()
             val showRegenerate = isLastAssistantMessage && showRegenerateButton
