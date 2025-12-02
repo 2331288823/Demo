@@ -647,7 +647,9 @@ class ConversationLogic(
                     withContext(Dispatchers.Main) {
                         uiState.isGenerating = false
                         uiState.updateLastMessageLoadingState(false)
-                        val errorMessage = formatErrorMessage(error)
+                        val errorMessage = formatErrorMessage(
+                            error as? Exception ?: Exception(error.message, error)
+                        )
                         uiState.addMessage(
                             Message("System", errorMessage, timeNow)
                         )

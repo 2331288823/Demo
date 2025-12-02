@@ -187,7 +187,7 @@ fun Messages(
         JumpToBottom(
             enabled = jumpToBottomButtonEnabled,
             onClicked = {
-                scope.launch {
+                coroutineScope.launch {
                     scrollState.animateScrollToItem(0)
                 }
             },

@@ -335,7 +335,7 @@ fun ConversationContent(
                 navigateToProfile = navigateToProfile,
                 modifier = Modifier.weight(1f),
                 scrollState = scrollState,
-                logic = conversationLogic,
+                logic = logic,
                 providerSetting = providerSetting,
                 model = model,
                 retrieveKnowledge = retrieveKnowledge,
