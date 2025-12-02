@@ -45,11 +45,14 @@ import com.example.star.aiwork.data.remote.StreamingChatRemoteDataSource
 import com.example.star.aiwork.data.repository.AiRepositoryImpl
 import com.example.star.aiwork.data.repository.MessagePersistenceGatewayImpl
 import com.example.star.aiwork.data.repository.MessageRepositoryImpl
+import com.example.star.aiwork.data.repository.SessionRepositoryImpl
 import com.example.star.aiwork.data.local.datasource.MessageLocalDataSourceImpl
+import com.example.star.aiwork.data.local.datasource.SessionLocalDataSourceImpl
 import com.example.star.aiwork.domain.usecase.PauseStreamingUseCase
 import com.example.star.aiwork.domain.usecase.RollbackMessageUseCase
 import com.example.star.aiwork.domain.usecase.SendMessageUseCase
 import com.example.star.aiwork.infra.network.SseClient
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 class ConversationFragment : Fragment() {
@@ -96,8 +99,12 @@ class ConversationFragment : Fragment() {
                     val messageLocalDataSource = MessageLocalDataSourceImpl(context)
                     MessageRepositoryImpl(messageLocalDataSource)
                 }
-                val messagePersistenceGateway = remember(messageRepository) {
-                    MessagePersistenceGatewayImpl(messageRepository)
+                val sessionRepository = remember(context) {
+                    val sessionLocalDataSource = SessionLocalDataSourceImpl(context)
+                    SessionRepositoryImpl(sessionLocalDataSource)
+                }
+                val messagePersistenceGateway = remember(messageRepository, sessionRepository) {
+                    MessagePersistenceGatewayImpl(messageRepository, sessionRepository)
                 }
                 val sendMessageUseCase = remember(aiRepository, messagePersistenceGateway, scope) {
                     SendMessageUseCase(aiRepository, messagePersistenceGateway, scope)
@@ -133,6 +140,12 @@ class ConversationFragment : Fragment() {
                         },
                         isNewChat = { sessionId ->
                             chatViewModel.isNewChat(sessionId)
+                        },
+                        onSessionUpdated = { sessionId ->
+                            // 刷新会话列表，让 drawer 中的会话按 updatedAt 排序
+                            scope.launch {
+                                chatViewModel.refreshSessions()
+                            }
                         }
                     )
                 }

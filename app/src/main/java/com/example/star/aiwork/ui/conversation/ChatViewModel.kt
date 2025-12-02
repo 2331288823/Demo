@@ -115,6 +115,15 @@ class ChatViewModel(
         }
     }
     
+    /**
+     * 手动刷新会话列表（用于在会话更新后刷新 drawer 中的列表）
+     */
+    suspend fun refreshSessions() {
+        getSessionListUseCase().firstOrNull()?.let { list ->
+            _sessions.value = list
+        }
+    }
+    
     fun searchSessions(query: String) {
         _searchQuery.value = query
         viewModelScope.launch {
