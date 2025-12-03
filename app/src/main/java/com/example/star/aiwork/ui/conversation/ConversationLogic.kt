@@ -36,11 +36,15 @@ import com.example.star.aiwork.infra.util.toBase64
 import com.example.star.aiwork.ui.ai.UIMessage
 import com.example.star.aiwork.ui.ai.UIMessagePart
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
@@ -67,11 +71,40 @@ class ConversationLogic(
 ) {
 
     private var activeTaskId: String? = null
+    // 用于保存流式收集协程的 Job，以便可以立即取消
+    private var streamingJob: Job? = null
+    // 创建独立的协程作用域用于流式收集，以便可以独立取消
+    private val streamingScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /**
      * 取消当前的流式生成。
      */
     suspend fun cancelStreaming() {
+        // 立即取消流式收集协程
+        streamingJob?.cancel()
+        streamingJob = null
+        
+        // 在消息末尾追加取消提示
+        var currentContent = ""
+        withContext(Dispatchers.Main) {
+            uiState.appendToLastMessage("\n（已取消生成）")
+            uiState.updateLastMessageLoadingState(false)
+            // 获取当前消息内容（包含取消提示）
+            val lastMessage = uiState.messages.firstOrNull { it.author == "AI" }
+            currentContent = lastMessage?.content ?: ""
+        }
+        
+        // 保存当前内容到数据库（包含取消提示）
+        if (currentContent.isNotEmpty()) {
+            persistenceGateway?.replaceLastAssistantMessage(
+                sessionId,
+                ChatDataItem(
+                    role = MessageRole.ASSISTANT.name.lowercase(),
+                    content = currentContent
+                )
+            )
+        }
+        
         val taskId = activeTaskId
         if (taskId != null) {
             // 无论成功还是失败，都要清除状态
@@ -145,7 +178,7 @@ class ConversationLogic(
         // 2. 调用 LLM 获取响应
         if (providerSetting != null && model != null) {
             try {
-                // ✅ 设置生成状态为 true
+                // 设置生成状态为 true
                 withContext(Dispatchers.Main) {
                     uiState.isGenerating = true
                 }
@@ -340,7 +373,7 @@ class ConversationLogic(
                     maxTokens = uiState.maxTokens
                 )
 
-                // ✅ 添加一个带加载状态的空 AI 消息作为容器
+                // 添加一个带加载状态的空 AI 消息作为容器
                 withContext(Dispatchers.Main) {
                     uiState.addMessage(Message("AI", "", timeNow, isLoading = true))
                 }
@@ -369,71 +402,88 @@ class ConversationLogic(
                 var lastUpdateTime = 0L
                 val UPDATE_INTERVAL_MS = 500L
 
-                // ✅ 无论流式还是非流式，都从 stream 收集响应
-                try {
-                    // 通过 asCharTypingStream，把上游 chunk 拆成一个个字符，营造打字机效果
-                    sendResult.stream.asCharTypingStream(charDelayMs = 30L).collect { delta ->
-                        fullResponse += delta
-                        withContext(Dispatchers.Main) {
-                            // ✅ 第一次收到内容时，移除加载状态
-                            if (delta.isNotEmpty()) {
-                                uiState.updateLastMessageLoadingState(false)
-                            }
-                            // ✅ 流式响应时逐字显示，非流式响应时一次性显示
-                            if (uiState.streamResponse) {
-                                uiState.appendToLastMessage(delta)
-                            }
+                // 无论流式还是非流式，都从 stream 收集响应
+                // 在独立的协程中运行流式收集，以便可以立即取消
+                streamingJob = streamingScope.launch {
+                    try {
+                        // 通过 asCharTypingStream，把上游 chunk 拆成一个个字符，营造打字机效果
+                        sendResult.stream.asCharTypingStream(charDelayMs = 30L).collect { delta ->
+                            fullResponse += delta
+                            withContext(Dispatchers.Main) {
+                                // 第一次收到内容时，移除加载状态
+                                if (delta.isNotEmpty()) {
+                                    uiState.updateLastMessageLoadingState(false)
+                                }
+                                // 流式响应时逐字显示，非流式响应时一次性显示
+                                if (uiState.streamResponse) {
+                                    uiState.appendToLastMessage(delta)
+                                }
 
-                            val currentTime = System.currentTimeMillis()
-                            if (currentTime - lastUpdateTime >= UPDATE_INTERVAL_MS) {
-                                persistenceGateway?.replaceLastAssistantMessage(
-                                    sessionId,
-                                    ChatDataItem(
-                                        role = MessageRole.ASSISTANT.name.lowercase(),
-                                        content = fullResponse
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - lastUpdateTime >= UPDATE_INTERVAL_MS) {
+                                    persistenceGateway?.replaceLastAssistantMessage(
+                                        sessionId,
+                                        ChatDataItem(
+                                            role = MessageRole.ASSISTANT.name.lowercase(),
+                                            content = fullResponse
+                                        )
                                     )
-                                )
-                                lastUpdateTime = currentTime
+                                    lastUpdateTime = currentTime
+                                }
                             }
                         }
-                    }
-                } catch (streamError: Exception) {
-                    // 如果是取消相关的异常（包括内部的 StreamResetException），直接交给外层取消逻辑处理
-                    if (streamError is CancellationException || isCancellationRelatedException(streamError)) {
+                    } catch (streamError: CancellationException) {
+                        // 协程被取消，这是正常操作，不需要处理
+                        throw streamError
+                    } catch (streamError: Exception) {
+                        // 如果是取消相关的异常（包括内部的 StreamResetException），直接交给外层取消逻辑处理
+                        if (isCancellationRelatedException(streamError)) {
+                            throw streamError
+                        }
+
+                        // 打印异常链，便于分析实际的网络错误类型
+                        logThrowableChain("ConversationLogic", "streamError during collect", streamError)
+
+                        // 流收集过程中的错误也需要处理
+                        withContext(Dispatchers.Main) {
+                            uiState.updateLastMessageLoadingState(false)
+                            uiState.isGenerating = false
+                            
+                            // 如果已经收到部分内容，保留它
+                            if (fullResponse.isNotEmpty()) {
+                                // 直接保留已收到的内容，不添加中断提示
+                            } else {
+                                // 如果完全没有收到内容，移除空消息
+                                if (uiState.messages.isNotEmpty() && 
+                                    uiState.messages[0].author == "AI" && 
+                                    uiState.messages[0].content.isBlank()) {
+                                    uiState.removeFirstMessage()
+                                }
+                            }
+                        }
+                        // 重新抛出异常，让外层 catch 块处理（如果没有收到内容才显示错误消息）
                         throw streamError
                     }
-
-                    // ✅ 打印异常链，便于分析实际的网络错误类型
-                    logThrowableChain("ConversationLogic", "streamError during collect", streamError)
-
-                    // ✅ 流收集过程中的错误也需要处理
-                    withContext(Dispatchers.Main) {
-                        uiState.updateLastMessageLoadingState(false)
-                        uiState.isGenerating = false
-                        
-                        // ✅ 如果已经收到部分内容，保留它
-                        if (fullResponse.isNotEmpty()) {
-                            // 直接保留已收到的内容，不添加中断提示
-                        } else {
-                            // ✅ 如果完全没有收到内容，移除空消息
-                            if (uiState.messages.isNotEmpty() && 
-                                uiState.messages[0].author == "AI" && 
-                                uiState.messages[0].content.isBlank()) {
-                                uiState.removeFirstMessage()
-                            }
-                        }
-                    }
-                    // 重新抛出异常，让外层 catch 块处理（如果没有收到内容才显示错误消息）
-                    throw streamError
                 }
                 
-                // ✅ 流式响应结束后，如果是非流式模式，一次性显示完整内容
+                // 等待流式收集完成
+                try {
+                    streamingJob?.join()
+                    streamingJob = null
+                } catch (e: CancellationException) {
+                    // 协程被取消，这是正常操作
+                    streamingJob = null
+                    // 抛出 CancellationException 以便外层能够正确处理
+                    throw e
+                }
+                
+                // 流式响应结束后，如果是非流式模式，一次性显示完整内容
                 withContext(Dispatchers.Main) {
                     if (!uiState.streamResponse && fullResponse.isNotBlank()) {
                         uiState.updateLastMessageLoadingState(false)
                         uiState.appendToLastMessage(fullResponse)
                     }
-                    // ✅ 响应结束后，设置生成状态为 false
+                    // 响应结束后，设置生成状态为 false
                     uiState.isGenerating = false
                 }
 
@@ -504,15 +554,12 @@ class ConversationLogic(
             } catch (e: Exception) {
                 // 检查是否是取消操作（包括CancellationException和包含取消原因的NetworkException）
                 if (e is CancellationException || isCancellationRelatedException(e)) {
-                    // 流被取消是正常操作，不需要显示错误
+                    // 流被取消是正常操作，cancelStreaming 已经处理了取消逻辑和消息追加
+                    // 这里只需要确保状态正确即可
                     withContext(Dispatchers.Main) {
                         uiState.isGenerating = false
                         // 确保 AI 消息容器不是加载状态
                         uiState.updateLastMessageLoadingState(false)
-                        // 可以选择添加一条"已取消"的提示，或者直接保持原样
-                        if (uiState.messages.isNotEmpty() && uiState.messages[0].content.isBlank()) {
-                            uiState.appendToLastMessage("[Cancelled]")
-                        }
                     }
                     return@processMessage
                 }
@@ -546,17 +593,17 @@ class ConversationLogic(
                 }
 
                 withContext(Dispatchers.Main) {
-                    // ✅ 确保停止加载状态
+                    // 确保停止加载状态
                     uiState.updateLastMessageLoadingState(false)
                     uiState.isGenerating = false
-                    // ✅ 如果最后一条消息是空的 AI 消息，移除它或更新它
+                    // 如果最后一条消息是空的 AI 消息，移除它或更新它
                     if (uiState.messages.isNotEmpty() && 
                         uiState.messages[0].author == "AI" && 
                         uiState.messages[0].content.isBlank()) {
                         uiState.removeFirstMessage()
                     }
                     
-                    // ✅ 生成格式化的错误消息，包含错误类型和建议
+                    // 生成格式化的错误消息，包含错误类型和建议
                     val errorMessage = formatErrorMessage(e)
 
                     uiState.addMessage(
@@ -665,32 +712,49 @@ class ConversationLogic(
                     var lastUpdateTime = 0L
                     val UPDATE_INTERVAL_MS = 500L
 
-                    // 收集流式响应
-                    flowResult.stream.asCharTypingStream(charDelayMs = 30L).collect { delta ->
-                        fullResponse += delta
-                        withContext(Dispatchers.Main) {
-                            // 第一次收到内容时，移除加载状态
-                            if (delta.isNotEmpty()) {
-                                uiState.updateLastMessageLoadingState(false)
-                            }
-                            // 流式响应时逐字显示
-                            if (uiState.streamResponse) {
-                                uiState.appendToLastMessage(delta)
-                            }
+                    // 收集流式响应，在独立的协程中运行以便可以立即取消
+                    streamingJob = streamingScope.launch {
+                        try {
+                            flowResult.stream.asCharTypingStream(charDelayMs = 30L).collect { delta ->
+                                fullResponse += delta
+                                withContext(Dispatchers.Main) {
+                                    // 第一次收到内容时，移除加载状态
+                                    if (delta.isNotEmpty()) {
+                                        uiState.updateLastMessageLoadingState(false)
+                                    }
+                                    // 流式响应时逐字显示
+                                    if (uiState.streamResponse) {
+                                        uiState.appendToLastMessage(delta)
+                                    }
 
-                            val currentTime = System.currentTimeMillis()
-                            if (currentTime - lastUpdateTime >= UPDATE_INTERVAL_MS) {
-                                persistenceGateway?.replaceLastAssistantMessage(
-                                    sessionId,
-                                    ChatDataItem(
-                                        role = MessageRole.ASSISTANT.name.lowercase(),
-                                        content = fullResponse
-                                    )
-                                )
-                                lastUpdateTime = currentTime
+                                    val currentTime = System.currentTimeMillis()
+                                    if (currentTime - lastUpdateTime >= UPDATE_INTERVAL_MS) {
+                                        persistenceGateway?.replaceLastAssistantMessage(
+                                            sessionId,
+                                            ChatDataItem(
+                                                role = MessageRole.ASSISTANT.name.lowercase(),
+                                                content = fullResponse
+                                            )
+                                        )
+                                        lastUpdateTime = currentTime
+                                    }
+                                }
                             }
+                        } catch (e: CancellationException) {
+                            // 协程被取消，这是正常操作
+                            throw e
                         }
                     }
+                    
+                    // 等待流式收集完成
+                    try {
+                        streamingJob?.join()
+                    } catch (e: CancellationException) {
+                        // 协程被取消，这是正常操作
+                        streamingJob = null
+                        throw e
+                    }
+                    streamingJob = null
 
                     // 流式响应结束后，如果是非流式模式，一次性显示完整内容
                     withContext(Dispatchers.Main) {
@@ -728,6 +792,17 @@ class ConversationLogic(
                 }
             )
         } catch (e: Exception) {
+            // 检查是否是取消操作
+            if (e is CancellationException || isCancellationRelatedException(e)) {
+                // 流被取消是正常操作，cancelStreaming 已经处理了取消逻辑和消息追加
+                // 这里只需要确保状态正确即可
+                withContext(Dispatchers.Main) {
+                    uiState.isGenerating = false
+                    uiState.updateLastMessageLoadingState(false)
+                }
+                return
+            }
+            
             withContext(Dispatchers.Main) {
                 uiState.isGenerating = false
                 uiState.updateLastMessageLoadingState(false)
