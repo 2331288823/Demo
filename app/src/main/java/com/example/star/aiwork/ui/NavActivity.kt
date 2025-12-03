@@ -118,6 +118,20 @@ class NavActivity : AppCompatActivity() {
                         }
                     }
 
+                    // 监听会话变化，恢复 Active Agent
+                    LaunchedEffect(currentSession, agents) {
+                        currentSession?.let { session ->
+                            val uiState = chatViewModel.getOrCreateSessionUiState(session.id, session.name)
+                            val savedAgentId = session.metadata.agentId
+                            if (savedAgentId != null) {
+                                val agent = agents.find { it.id == savedAgentId }
+                                if (agent != null) {
+                                    uiState.activeAgent = agent
+                                }
+                            }
+                        }
+                    }
+
                     // 协程作用域，用于处理 UI 事件中的挂起函数 (如关闭菜单)
                     val scope = rememberCoroutineScope()
 
@@ -158,6 +172,9 @@ class NavActivity : AppCompatActivity() {
                                     )
                                 )
                                 uiState.activeAgent = agent
+                                
+                                // 保存关联关系到数据库
+                                chatViewModel.updateSessionAgent(session.id, agent.id)
                             }
                             
                             // 关闭抽屉并导航回聊天

@@ -224,6 +224,7 @@ fun ConversationContent(
     var lastPartialLength by remember { mutableIntStateOf(0) }
 
     // 处理 ASR 结果的转录监听器
+    // ⚠️ 注意：uiState 会随着会话切换而变化，所以 listener 也会重新创建。
     val transcriptionListener = remember(scope, uiState) {
         object : YoudaoWebSocket.TranscriptionListener {
             override fun onTranscriptionReceived(text: String, isFinal: Boolean) {
@@ -260,10 +261,14 @@ fun ConversationContent(
             }
         }
     }
+
+    // ⚠️ 修复：当 transcriptionListener 更新时，必须重新赋值给 WebSocket，否则 WebSocket 会持有旧的 listener（指向旧的 uiState）
     val youdaoWebSocket = remember {
-        YoudaoWebSocket().apply {
-            listener = transcriptionListener
-        }
+        YoudaoWebSocket()
+    }
+    // 使用 SideEffect 确保每次重组如果 listener 变了都更新进去
+    SideEffect {
+        youdaoWebSocket.listener = transcriptionListener
     }
 
     // 音频录制的权限启动器
