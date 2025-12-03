@@ -171,24 +171,24 @@ class ChatViewModel(
         }
     }
 
-//    /**
-//     * 创建临时session（仅在内存中，不保存到数据库）
-//     * 只有当用户发送第一条消息时，才会真正保存到数据库
-//     */
-//    fun createTemporarySession(name: String) {
-//        val session = SessionEntity(
-//            id = UUID.randomUUID().toString(),
-//            name = name,
-//            createdAt = System.currentTimeMillis(),
-//            updatedAt = System.currentTimeMillis(),
-//            pinned = false,
-//            archived = false,
-//            metadata = SessionMetadata()
-//        )
-//        _currentSession.value = session
-//        // 临时session不加载草稿，因为还没有保存到数据库
-//        _draft.value = null
-//    }
+    /**
+     * 创建临时session（仅在内存中，不保存到数据库）
+     * 只有当用户发送第一条消息时，才会真正保存到数据库
+     */
+    fun createTemporarySession(name: String) {
+        val session = SessionEntity(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis(),
+            pinned = false,
+            archived = false,
+            metadata = SessionMetadata()
+        )
+        _currentSession.value = session
+        // 临时session不加载草稿，因为还没有保存到数据库
+        _draft.value = null
+    }
 
     fun renameSession(newName: String) {
         viewModelScope.launch {
