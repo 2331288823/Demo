@@ -226,27 +226,33 @@ fun ConversationContent(
     // 处理 ASR 结果的转录监听器
     val transcriptionListener = remember(scope, uiState) {
         object : YoudaoWebSocket.TranscriptionListener {
-            override fun onTranscriptionReceived(text: String) {  // ✅ 修正方法名
+            override fun onTranscriptionReceived(text: String, isFinal: Boolean) {
                 scope.launch(Dispatchers.Main) {
                     val currentText = uiState.textFieldValue.text
-                    
+
                     // 删除以前的部分文本（如果有），以便使用新的部分或最终结果进行更新
                     val safeCurrentText = if (currentText.length >= lastPartialLength) {
                         currentText.dropLast(lastPartialLength)
                     } else {
                         currentText // 通常不应该发生
                     }
-                    
+
                     val newText = safeCurrentText + text
-                    
+
                     uiState.textFieldValue = uiState.textFieldValue.copy(
-                        text = newText, // Fix: use newText
-                        selection = TextRange(newText.length) // Fix: use newText.length
+                        text = newText,
+                        selection = TextRange(newText.length)
                     )
+
+                    lastPartialLength = if (isFinal) {
+                        0
+                    } else {
+                        text.length
+                    }
                 }
             }
 
-            override fun onError(error: String) {  // ✅ 修正参数类型
+            override fun onError(error: String) {
                 Log.e("VoiceInput", "ASR Error: $error")
                 scope.launch(Dispatchers.Main) {
                     Toast.makeText(context, "识别错误: $error", Toast.LENGTH_LONG).show()

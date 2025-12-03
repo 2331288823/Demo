@@ -166,6 +166,15 @@ class NavActivity : AppCompatActivity() {
                                 drawerState.close()
                             }
                         },
+                        onAgentDelete = { agent ->
+                            mainViewModel.removeAgent(agent.id)
+                        },
+                        onPromptMarketClicked = {
+                            findNavController().navigate(R.id.nav_market)
+                            scope.launch {
+                                drawerState.close()
+                            }
+                        },
                         onImportPdfClicked = {
                             pdfLauncher.launch("application/pdf")
                             scope.launch {

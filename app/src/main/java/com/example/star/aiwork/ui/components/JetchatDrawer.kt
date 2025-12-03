@@ -37,9 +37,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
@@ -81,6 +83,8 @@ fun JetchatDrawer(
     onChatClicked: (String) -> Unit,
     onProfileClicked: (String) -> Unit,
     onAgentClicked: (Agent) -> Unit = {},
+    onAgentDelete: (Agent) -> Unit = {},
+    onPromptMarketClicked: () -> Unit = {},
     onImportPdfClicked: () -> Unit = {},
     onNewChatClicked: () -> Unit = {},
     onRenameSession: (String) -> Unit = {},
@@ -101,6 +105,8 @@ fun JetchatDrawer(
                         onProfileClicked = onProfileClicked,
                         onChatClicked = onChatClicked,
                         onAgentClicked = onAgentClicked,
+                        onAgentDelete = onAgentDelete,
+                        onPromptMarketClicked = onPromptMarketClicked,
                         onImportPdfClicked = onImportPdfClicked,
                         onNewChatClicked = onNewChatClicked,
                         onRenameSession = onRenameSession,
@@ -139,6 +145,8 @@ fun JetchatDrawerContent(
     onProfileClicked: (String) -> Unit, 
     onChatClicked: (String) -> Unit, 
     onAgentClicked: (Agent) -> Unit,
+    onAgentDelete: (Agent) -> Unit,
+    onPromptMarketClicked: () -> Unit,
     onImportPdfClicked: () -> Unit,
     onNewChatClicked: () -> Unit,
     onRenameSession: (String) -> Unit,
@@ -162,11 +170,13 @@ fun JetchatDrawerContent(
         NewChatItem(onNewChatClicked = onNewChatClicked)
         DividerItem(modifier = Modifier.padding(horizontal = 30.dp))
         DrawerItemHeader("角色市场")
+        MarketItem(onPromptMarketClicked)
         agents.forEach { agent ->
             AgentItem(
                 agent = agent,
                 selected = false, // Can be updated to track selection
-                onAgentClicked = { onAgentClicked(agent) }
+                onAgentClicked = { onAgentClicked(agent) },
+                onAgentDelete = { onAgentDelete(agent) }
             )
         }
 
@@ -317,6 +327,37 @@ private fun NewChatItem(onNewChatClicked: () -> Unit) {
 }
 
 /**
+ * 角色广场项组件。
+ *
+ * @param onClick 点击回调。
+ */
+@Composable
+private fun MarketItem(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .height(56.dp)
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        verticalAlignment = CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Default.ShoppingCart,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
+            contentDescription = null,
+        )
+        Text(
+            "角色广场",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(start = 12.dp),
+        )
+    }
+}
+
+/**
  * 聊天列表项组件。
  *
  * @param text 聊天名称。
@@ -384,7 +425,12 @@ private fun ChatItem(
  * Agent 列表项组件。
  */
 @Composable
-private fun AgentItem(agent: Agent, selected: Boolean, onAgentClicked: () -> Unit) {
+private fun AgentItem(
+    agent: Agent,
+    selected: Boolean,
+    onAgentClicked: () -> Unit,
+    onAgentDelete: () -> Unit
+) {
     val background = if (selected) {
         Modifier.background(MaterialTheme.colorScheme.primaryContainer)
     } else {
@@ -411,7 +457,10 @@ private fun AgentItem(agent: Agent, selected: Boolean, onAgentClicked: () -> Uni
             modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
             contentDescription = null,
         )
-        Column(modifier = Modifier.padding(start = 12.dp)) {
+        Column(modifier = Modifier
+            .padding(start = 12.dp)
+            .weight(1f)
+        ) {
              Text(
                 text = agent.name,
                 style = MaterialTheme.typography.bodyMedium,
@@ -428,7 +477,16 @@ private fun AgentItem(agent: Agent, selected: Boolean, onAgentClicked: () -> Uni
                 maxLines = 1
             )
         }
-       
+        
+        if (!agent.isDefault) {
+            IconButton(onClick = onAgentDelete) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    contentDescription = "Delete Agent"
+                )
+            }
+        }
     }
 }
 
@@ -538,6 +596,8 @@ fun DrawerPreview() {
                     onProfileClicked = {},
                     onChatClicked = {},
                     onAgentClicked = {},
+                    onAgentDelete = {},
+                    onPromptMarketClicked = {},
                     onImportPdfClicked = {},
                     onNewChatClicked = {},
                     onRenameSession = {},
@@ -566,6 +626,8 @@ fun DrawerPreviewDark() {
                     onProfileClicked = {},
                     onChatClicked = {},
                     onAgentClicked = {},
+                    onAgentDelete = {},
+                    onPromptMarketClicked = {},
                     onImportPdfClicked = {},
                     onNewChatClicked = {},
                     onRenameSession = {},
@@ -580,4 +642,3 @@ fun DrawerPreviewDark() {
         }
     }
 }
-
