@@ -85,6 +85,7 @@ class NavActivity : AppCompatActivity() {
                     val agents by mainViewModel.agents.collectAsStateWithLifecycle()
                     val sessions by chatViewModel.sessions.collectAsStateWithLifecycle()
                     val currentSession by chatViewModel.currentSession.collectAsStateWithLifecycle()
+                    val knownKnowledgeBases by mainViewModel.knownKnowledgeBases.collectAsStateWithLifecycle()
 
                     // 记录当前选中的菜单项
                     var selectedMenu by remember { mutableStateOf("composers") }
@@ -141,6 +142,7 @@ class NavActivity : AppCompatActivity() {
                         selectedMenu = currentSession?.id ?: "",
                         agents = agents,
                         sessions = sessions,
+                        knownKnowledgeBases = knownKnowledgeBases,
                         onChatClicked = { sessionId ->
                             val session = sessions.find { it.id == sessionId }
                             if (session != null) {
@@ -197,6 +199,9 @@ class NavActivity : AppCompatActivity() {
                             scope.launch {
                                 drawerState.close()
                             }
+                        },
+                        onDeleteKnowledgeBase = { filename ->
+                             mainViewModel.deleteKnowledgeBase(filename)
                         },
                         onNewChatClicked = {
                             scope.launch {
