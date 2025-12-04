@@ -1,6 +1,7 @@
 package com.example.star.aiwork.ui.conversation
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -233,16 +234,41 @@ class ChatViewModel(
 
     fun renameSession(sessionId: String, newName: String) {
         viewModelScope.launch {
-            renameSessionUseCase(sessionId, newName)
-            // 如果重命名的是当前会话，更新当前会话状态
+            Log.d("ChatViewModel", "🔄 [renameSession] 开始重命名会话")
+            Log.d("ChatViewModel", "  - 会话ID: $sessionId")
+            Log.d("ChatViewModel", "  - 新名称: $newName")
+            
             val currentSession = _currentSession.value
+            // 如果会话不存在于数据库中，但存在于当前会话中，先创建会话
             if (currentSession?.id == sessionId) {
+                // 检查会话是否已持久化（通过检查 sessions 列表中是否存在）
+                val isPersisted = _sessions.value.any { it.id == sessionId }
+                if (!isPersisted) {
+                    Log.d("ChatViewModel", "  - 会话尚未持久化，先创建会话")
+                    // 先创建会话（使用新名称）
+                    val sessionToCreate = currentSession.copy(
+                        name = newName,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    createSessionUseCase(sessionToCreate)
+                    Log.d("ChatViewModel", "  - 会话已创建，名称: $newName")
+                } else {
+                    // 会话已存在，执行重命名
+                    renameSessionUseCase(sessionId, newName)
+                }
+                // 更新当前会话状态
                 _currentSession.value = currentSession.copy(name = newName)
+                Log.d("ChatViewModel", "  - 已更新当前会话状态: $newName")
+            } else {
+                // 不是当前会话，直接重命名
+                renameSessionUseCase(sessionId, newName)
             }
+            
             // 更新 UI 状态的 channelName
             getSessionUiState(sessionId)?.channelName = newName.ifBlank { "新对话" }
             // 刷新会话列表
             loadSessions()
+            Log.d("ChatViewModel", "✅ [renameSession] 重命名完成，已调用 loadSessions()")
         }
     }
 

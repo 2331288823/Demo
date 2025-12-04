@@ -162,10 +162,25 @@ class ConversationLogic(
             onPersistNewChatSession(sessionId)
         }
         // ADDED: Auto-rename session logic
-        if (!isAutoTriggered && (uiState.channelName == "New Chat" || uiState.channelName == "新聊天") && uiState.messages.none { it.author == authorMe }) {
+        // 注意：如果是新会话，需要先等待持久化完成，然后再重命名
+        if (!isAutoTriggered && (uiState.channelName == "New Chat" || uiState.channelName == "新聊天" || uiState.channelName == "新会话" || uiState.channelName == "new chat") && uiState.messages.none { it.author == authorMe }) {
             val newTitle = inputContent.take(20).trim()
             if (newTitle.isNotBlank()) {
+                Log.d("ConversationLogic", "🔄 [Auto-Rename] 检测到默认会话名称，准备重命名")
+                Log.d("ConversationLogic", "  - 会话ID: $sessionId")
+                Log.d("ConversationLogic", "  - 当前名称: ${uiState.channelName}")
+                Log.d("ConversationLogic", "  - 新名称: $newTitle")
+                // 如果是新会话，先等待持久化完成
+                if (isNewChat(sessionId)) {
+                    Log.d("ConversationLogic", "  - 检测到新会话，等待持久化完成...")
+                    onPersistNewChatSession(sessionId)
+                    // 等待一小段时间确保持久化完成
+                    delay(50)
+                }
                 onRenameSession(sessionId, newTitle)
+                // 刷新会话列表，确保侧边栏同步更新
+                onSessionUpdated(sessionId)
+                Log.d("ConversationLogic", "✅ [Auto-Rename] 重命名完成，已调用 onSessionUpdated")
             }
         }
 
@@ -800,7 +815,7 @@ class ConversationLogic(
                 .filter { it.author != "System" } // 过滤掉 System 消息
             
             // 找到最后一条助手消息的索引并排除它
-            val lastAssistantIndex = allMessages.indexOfLast { it.author != authorMe }
+            val lastAssistantIndex = allMessages.indexOfFirst { it.author != authorMe }
             val historyMessages = if (lastAssistantIndex >= 0) {
                 allMessages.take(lastAssistantIndex) + allMessages.drop(lastAssistantIndex + 1)
             } else {
@@ -875,56 +890,22 @@ class ConversationLogic(
                     val UPDATE_INTERVAL_MS = 500L
                     var hasShownSlowLoadingHint = false // 标记是否已显示慢加载提示
                     var hasErrorOccurred = false // 标记是否发生了错误
-                    var hasReceivedFirstDelta = false // 标记是否已收到第一个有效内容
-                    val responseStartTime = System.currentTimeMillis()
-                    val RESPONSE_TIMEOUT_MS = 30000L // 30秒超时
-
-                    // 添加超时监控协程
-                    val timeoutJob = streamingScope.launch {
-                        delay(RESPONSE_TIMEOUT_MS)
-                        if (!hasReceivedFirstDelta && !hasErrorOccurred && !isCancelled) {
-                            // 超时且未收到任何内容，清除加载状态并显示错误
-                            hasErrorOccurred = true
-                            withContext(Dispatchers.Main) {
-                                uiState.updateLastMessageLoadingState(false)
-                                uiState.isGenerating = false
-                                if (uiState.messages.isNotEmpty() &&
-                                    uiState.messages[0].author == "AI" &&
-                                    uiState.messages[0].content.isBlank()) {
-                                    uiState.removeFirstMessage()
-                                }
-                                uiState.addMessage(
-                                    Message("System", "响应超时，请稍后重试", timeNow)
-                                )
-                            }
-                            streamingJob?.cancel()
-                        }
-                    }
 
                     // 收集流式响应，在独立的协程中运行以便可以立即取消
                     streamingJob = streamingScope.launch {
                         try {
                             flowResult.stream.asCharTypingStream(charDelayMs = 30L).collect { delta ->
-                                // 检查是否是有效的非空内容
-                                val isValidDelta = delta.isNotEmpty() && delta.trim().isNotEmpty()
-                                
-                                // 记录是否收到过有效内容
-                                if (isValidDelta && !hasReceivedFirstDelta) {
-                                    hasReceivedFirstDelta = true
-                                }
-                                
                                 fullResponse += delta
                                 withContext(Dispatchers.Main) {
-                                    // 流式模式下，第一次收到有效内容时移除加载状态
+                                    // 流式模式下，第一次收到内容时移除加载状态
                                     // 非流式模式下，等到收集完所有数据后再移除（在流收集完成后处理）
-                                    if (uiState.streamResponse && hasReceivedFirstDelta) {
-                                        // 确保在收到内容后加载状态被清除
+                                    if (uiState.streamResponse && delta.isNotEmpty()) {
                                         uiState.updateLastMessageLoadingState(false)
                                     }
                                     
                                     // 非流式模式下，第一次收到数据时流式显示慢加载提示
                                     // 注意：提示上方需要保持加载图标，所以添加提示后要恢复加载状态
-                                    if (!uiState.streamResponse && isValidDelta && !hasShownSlowLoadingHint) {
+                                    if (!uiState.streamResponse && delta.isNotEmpty() && !hasShownSlowLoadingHint) {
                                         hasShownSlowLoadingHint = true
                                         val hintText = "加载较慢？试试流式输出~"
                                         // 启动协程来流式显示提示消息
@@ -949,8 +930,8 @@ class ConversationLogic(
                                         }
                                     }
                                     
-                                    // 流式响应时逐字显示（只显示有效内容）
-                                    if (uiState.streamResponse && isValidDelta) {
+                                    // 流式响应时逐字显示
+                                    if (uiState.streamResponse) {
                                         uiState.appendToLastMessage(delta)
                                     }
 
@@ -1027,9 +1008,6 @@ class ConversationLogic(
                         }
                     }
                     
-                    // 取消超时监控（如果流已开始）
-                    timeoutJob.cancel()
-                    
                     // 等待流式收集完成
                     try {
                         streamingJob?.join()
@@ -1056,10 +1034,6 @@ class ConversationLogic(
                             uiState.updateLastMessageLoadingState(false)
                             // 直接替换消息内容，这样会自动移除之前添加的慢加载提示
                             uiState.replaceLastMessageContent(fullResponse)
-                        }
-                        // 确保在流收集完成后，加载状态被清除（防止卡在加载状态）
-                        if (hasReceivedFirstDelta || fullResponse.isNotBlank()) {
-                            uiState.updateLastMessageLoadingState(false)
                         }
                         uiState.isGenerating = false
                     }
