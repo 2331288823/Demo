@@ -207,6 +207,11 @@ class NavActivity : AppCompatActivity() {
                         },
                         onNewChatClicked = {
                             scope.launch {
+                                // 创建临时会话（仅在内存中，不保存到数据库）
+                                // 只有当用户发送第一条消息时，才会真正保存到数据库
+                                val sessionName = "新聊天"
+                                chatViewModel.createTemporarySession(sessionName)
+                                /*
                                 // 创建新会话，使用默认名称
                                 val sessionName = "New Chat"
                                 chatViewModel.createSession(sessionName)
@@ -218,6 +223,7 @@ class NavActivity : AppCompatActivity() {
                                 if (newSession != null) {
                                     chatViewModel.selectSession(newSession)
                                 }
+                                */
 
                                 // 导航到聊天页面
                                 findNavController().popBackStack(R.id.nav_home, false)

@@ -480,36 +480,37 @@ class ConversationLogic(
                             }
                         }
                     } catch (streamError: CancellationException) {
-                        // 协程被取消，这是正常操作，不需要处理
-                        throw streamError
+                        // 协程被取消是正常情况，直接结束协程即可，由 cancelStreaming 负责 UI 收尾
                     } catch (streamError: Exception) {
-                        // 如果是取消相关的异常（包括内部的 StreamResetException），直接交给外层取消逻辑处理
-                        if (isCancellationRelatedException(streamError)) {
-                            throw streamError
-                        }
-
                         // 打印异常链，便于分析实际的网络错误类型
                         logThrowableChain("ConversationLogic", "streamError during collect", streamError)
 
-                        // 流收集过程中的错误也需要处理
+                        // 流收集过程中的错误需要在 UI 层做兜底处理，但不要继续向外抛异常以避免崩溃
                         withContext(Dispatchers.Main) {
                             uiState.updateLastMessageLoadingState(false)
                             uiState.isGenerating = false
-                            
-                            // 如果已经收到部分内容，保留它
+
                             if (fullResponse.isNotEmpty()) {
-                                // 直接保留已收到的内容，不添加中断提示
+                                // 已经有部分内容，就保留当前内容，不再额外追加错误提示
                             } else {
-                                // 如果完全没有收到内容，移除空消息
-                                if (uiState.messages.isNotEmpty() && 
-                                    uiState.messages[0].author == "AI" && 
-                                    uiState.messages[0].content.isBlank()) {
+                                // 完全没有内容：移除空的占位 AI 消息，并显示一条系统错误消息
+                                if (uiState.messages.isNotEmpty() &&
+                                    uiState.messages[0].author == "AI" &&
+                                    uiState.messages[0].content.isBlank()
+                                ) {
                                     uiState.removeFirstMessage()
                                 }
+
+                                val errorMessage = formatErrorMessage(
+                                    streamError as? Exception
+                                        ?: Exception(streamError.message, streamError)
+                                )
+                                uiState.addMessage(
+                                    Message("System", errorMessage, timeNow)
+                                )
                             }
                         }
-                        // 重新抛出异常，让外层 catch 块处理（如果没有收到内容才显示错误消息）
-                        throw streamError
+                        // 不再重新抛出异常，避免在 DefaultDispatcher 线程上触发全局未捕获异常导致崩溃
                     }
                 }
                 
@@ -518,10 +519,8 @@ class ConversationLogic(
                     streamingJob?.join()
                     streamingJob = null
                 } catch (e: CancellationException) {
-                    // 协程被取消，这是正常操作
+                    // 协程被取消是正常情况，这里只做状态清理，不再向外抛出
                     streamingJob = null
-                    // 抛出 CancellationException 以便外层能够正确处理
-                    throw e
                 }
                 
                 // 等待提示消息的流式显示完成（如果正在显示）
@@ -858,8 +857,29 @@ class ConversationLogic(
                                 }
                             }
                         } catch (e: CancellationException) {
-                            // 协程被取消，这是正常操作
-                            throw e
+                            // 协程被取消是正常情况，直接结束协程即可，由 cancelStreaming 负责 UI 收尾
+                        } catch (streamError: Exception) {
+                            // 打印异常链，便于分析实际的网络错误类型
+                            logThrowableChain("ConversationLogic", "streamError during rollback collect", streamError)
+
+                            // 流收集过程中的错误需要在 UI 层做兜底处理，但不要继续向外抛异常以避免崩溃
+                            withContext(Dispatchers.Main) {
+                                uiState.updateLastMessageLoadingState(false)
+                                uiState.isGenerating = false
+
+                                if (fullResponse.isNotEmpty()) {
+                                    // 已经有部分内容，就保留当前内容，不再额外追加错误提示
+                                } else {
+                                    val errorMessage = formatErrorMessage(
+                                        streamError as? Exception
+                                            ?: Exception(streamError.message, streamError)
+                                    )
+                                    uiState.addMessage(
+                                        Message("System", errorMessage, timeNow)
+                                    )
+                                }
+                            }
+                            // 不再重新抛出异常，避免在 DefaultDispatcher 线程上触发全局未捕获异常导致崩溃
                         }
                     }
                     
@@ -867,9 +887,8 @@ class ConversationLogic(
                     try {
                         streamingJob?.join()
                     } catch (e: CancellationException) {
-                        // 协程被取消，这是正常操作
+                        // 协程被取消是正常情况，这里只做状态清理，不再向外抛出
                         streamingJob = null
-                        throw e
                     }
                     streamingJob = null
 
