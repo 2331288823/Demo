@@ -142,6 +142,13 @@ class ChatViewModel(
         }
     }
     
+    /**
+     * 获取最新的会话列表（一次性获取，用于 drawer 打开时刷新）
+     */
+    suspend fun getSessionsList(): List<SessionEntity> {
+        return getSessionListUseCase().firstOrNull() ?: emptyList()
+    }
+    
     fun searchSessions(query: String) {
         _searchQuery.value = query
         

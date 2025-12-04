@@ -57,10 +57,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.filter
 import androidx.compose.ui.Alignment.Companion.CenterStart
 import androidx.compose.ui.Alignment.Companion.CenterVertically
 import androidx.compose.ui.Modifier
@@ -100,7 +103,7 @@ fun JetchatDrawer(
     onDeleteSession: (String) -> Unit = {},
     onRagEnabledChanged: (Boolean) -> Unit = {},
     agents: List<Agent> = emptyList(),
-    sessions: List<SessionEntity> = emptyList(),
+    getSessions: suspend () -> List<SessionEntity> = { emptyList() },
     knownKnowledgeBases: List<String> = emptyList(),
     isRagEnabled: Boolean = true,
     selectedMenu: String = "",
@@ -112,6 +115,7 @@ fun JetchatDrawer(
             drawerContent = {
                 ModalDrawerSheet {
                     JetchatDrawerContent(
+                        drawerState = drawerState,
                         onProfileClicked = onProfileClicked,
                         onChatClicked = onChatClicked,
                         onAgentClicked = onAgentClicked,
@@ -126,7 +130,7 @@ fun JetchatDrawer(
                         onDeleteSession = onDeleteSession,
                         onRagEnabledChanged = onRagEnabledChanged,
                         agents = agents,
-                        sessions = sessions,
+                        getSessions = getSessions,
                         knownKnowledgeBases = knownKnowledgeBases,
                         isRagEnabled = isRagEnabled,
                         selectedMenu = selectedMenu
@@ -156,6 +160,7 @@ fun JetchatDrawer(
  */
 @Composable
 fun JetchatDrawerContent(
+    drawerState: DrawerState,
     onProfileClicked: (String) -> Unit, 
     onChatClicked: (String) -> Unit, 
     onAgentClicked: (Agent) -> Unit,
@@ -170,7 +175,7 @@ fun JetchatDrawerContent(
     onDeleteSession: (String) -> Unit,
     onRagEnabledChanged: (Boolean) -> Unit,
     agents: List<Agent>,
-    sessions: List<SessionEntity>,
+    getSessions: suspend () -> List<SessionEntity>,
     knownKnowledgeBases: List<String>,
     isRagEnabled: Boolean,
     selectedMenu: String
@@ -181,6 +186,19 @@ fun JetchatDrawerContent(
     val scrollState = rememberScrollState()
     var isAgentsExpanded by remember { mutableStateOf(false) }
     var isKnowledgeExpanded by remember { mutableStateOf(false) }
+    
+    // Drawer 自己维护的会话列表，只在打开时更新
+    var sessions by remember { mutableStateOf<List<SessionEntity>>(emptyList()) }
+    
+    // 监听 drawer 打开状态，打开时更新会话列表
+    LaunchedEffect(Unit) {
+        snapshotFlow { drawerState.currentValue }
+            .filter { it == DrawerValue.Open }
+            .collect {
+                // Drawer 已经打开，更新会话列表
+                sessions = getSessions()
+            }
+    }
 
     Column(
         modifier = Modifier.verticalScroll(scrollState)
@@ -751,8 +769,10 @@ fun DividerItem(modifier: Modifier = Modifier) {
 fun DrawerPreview() {
     JetchatTheme {
         Surface {
+            val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
             Column {
                 JetchatDrawerContent(
+                    drawerState = drawerState,
                     onProfileClicked = {},
                     onChatClicked = {},
                     onAgentClicked = {},
@@ -767,7 +787,7 @@ fun DrawerPreview() {
                     onDeleteSession = {},
                     onRagEnabledChanged = {},
                     agents = emptyList(),
-                    sessions = emptyList(),
+                    getSessions = { emptyList() },
                     knownKnowledgeBases = listOf("doc1.pdf", "report_final.pdf"),
                     isRagEnabled = true,
                     selectedMenu = ""
@@ -785,8 +805,10 @@ fun DrawerPreview() {
 fun DrawerPreviewDark() {
     JetchatTheme(isDarkTheme = true) {
         Surface {
+            val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
             Column {
                 JetchatDrawerContent(
+                    drawerState = drawerState,
                     onProfileClicked = {},
                     onChatClicked = {},
                     onAgentClicked = {},
@@ -801,7 +823,7 @@ fun DrawerPreviewDark() {
                     onDeleteSession = {},
                     onRagEnabledChanged = {},
                     agents = emptyList(),
-                    sessions = emptyList(),
+                    getSessions = { emptyList() },
                     knownKnowledgeBases = listOf("doc1.pdf", "report_final.pdf"),
                     isRagEnabled = true,
                     selectedMenu = ""
