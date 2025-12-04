@@ -24,6 +24,8 @@ import com.example.star.aiwork.domain.usecase.session.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import java.util.*
 import kotlinx.coroutines.flow.SharingStarted
 
@@ -86,13 +88,18 @@ class ChatViewModel(
     /**
      * 获取或创建指定会话的 ConversationUiState
      * 使用 LRU Cache 管理，当缓存满时会自动移除最久未使用的状态
+     * 每个会话的协程作用域是 viewModelScope 的子 scope，确保在 ViewModel 销毁时自动取消
      */
     fun getOrCreateSessionUiState(sessionId: String, sessionName: String): ConversationUiState {
         return uiStateCache.getOrCreate(sessionId, sessionName) { id, name ->
+            // 为每个会话创建独立的协程作用域，作为 viewModelScope 的子 scope
+            // 这样当 ViewModel 被销毁时，所有会话的协程都会被自动取消
+            val sessionScope = CoroutineScope(viewModelScope.coroutineContext + SupervisorJob())
             ConversationUiState(
                 channelName = name.ifBlank { "新对话" },
                 channelMembers = 1,
-                initialMessages = emptyList()
+                initialMessages = emptyList(),
+                coroutineScope = sessionScope
             )
         }
     }

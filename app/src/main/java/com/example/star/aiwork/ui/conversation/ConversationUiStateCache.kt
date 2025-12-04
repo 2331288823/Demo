@@ -37,6 +37,10 @@ class ConversationUiStateCache(
     ) {
         // 重写 removeEldestEntry，当大小超过 maxSize 时自动移除最旧的条目
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ConversationUiState>?): Boolean {
+            if (size > maxSize && eldest != null) {
+                // 当移除最旧的条目时，取消其所有协程
+                eldest.value.cancelAllCoroutines()
+            }
             return size > maxSize
         }
     }
@@ -90,20 +94,27 @@ class ConversationUiStateCache(
 
     /**
      * 移除指定会话的 UI 状态。
+     * 移除时会自动取消该会话的所有协程。
      * 
      * @param sessionId 会话 ID
      * @return 被移除的 UI 状态，如果不存在则返回 null
      */
     @Synchronized
     fun remove(sessionId: String): ConversationUiState? {
-        return cache.remove(sessionId)
+        val removed = cache.remove(sessionId)
+        // 取消被移除会话的所有协程
+        removed?.cancelAllCoroutines()
+        return removed
     }
 
     /**
      * 清空所有缓存的状态。
+     * 清空时会自动取消所有会话的协程。
      */
     @Synchronized
     fun clear() {
+        // 在清空前，取消所有会话的协程
+        cache.values.forEach { it.cancelAllCoroutines() }
         cache.clear()
     }
 
