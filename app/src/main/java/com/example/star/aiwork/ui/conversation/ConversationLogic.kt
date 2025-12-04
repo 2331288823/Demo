@@ -75,8 +75,8 @@ class ConversationLogic(
     private var streamingJob: Job? = null
     // 用于保存提示消息流式显示的 Job，以便可以立即取消
     private var hintTypingJob: Job? = null
-    // 创建独立的协程作用域用于流式收集，以便可以独立取消
-    private val streamingScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // 使用 uiState 的协程作用域，这样每个会话可以管理自己的协程
+    private val streamingScope: CoroutineScope = uiState.coroutineScope
     // 标记是否已被取消，用于非流式模式下避免显示已收集的内容
     @Volatile private var isCancelled = false
 

@@ -24,6 +24,8 @@ import com.example.star.aiwork.domain.usecase.session.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import java.util.*
 import kotlinx.coroutines.flow.SharingStarted
 
@@ -80,30 +82,34 @@ class ChatViewModel(
     private val _draft = MutableStateFlow<String?>(null)
     val draft: StateFlow<String?> = _draft.asStateFlow()
 
-    // 为每个会话管理独立的 ConversationUiState
-    private val _sessionUiStates = MutableStateFlow<Map<String, ConversationUiState>>(emptyMap())
+    // 使用 LRU Cache 管理每个会话的 ConversationUiState，最多缓存 5 个
+    private val uiStateCache = ConversationUiStateCache(maxSize = 5)
     
     /**
      * 获取或创建指定会话的 ConversationUiState
+     * 使用 LRU Cache 管理，当缓存满时会自动移除最久未使用的状态
+     * 每个会话的协程作用域是 viewModelScope 的子 scope，确保在 ViewModel 销毁时自动取消
      */
     fun getOrCreateSessionUiState(sessionId: String, sessionName: String): ConversationUiState {
-        val currentStates = _sessionUiStates.value
-        return currentStates[sessionId] ?: run {
-            val newUiState = ConversationUiState(
-                channelName = sessionName.ifBlank { "新对话" },
+        return uiStateCache.getOrCreate(sessionId, sessionName) { id, name ->
+            // 为每个会话创建独立的协程作用域，作为 viewModelScope 的子 scope
+            // 这样当 ViewModel 被销毁时，所有会话的协程都会被自动取消
+            val sessionScope = CoroutineScope(viewModelScope.coroutineContext + SupervisorJob())
+            ConversationUiState(
+                channelName = name.ifBlank { "新对话" },
                 channelMembers = 1,
-                initialMessages = emptyList()
+                initialMessages = emptyList(),
+                coroutineScope = sessionScope
             )
-            _sessionUiStates.value = currentStates + (sessionId to newUiState)
-            newUiState
         }
     }
     
     /**
      * 获取指定会话的 ConversationUiState（如果不存在则返回 null）
+     * 访问时会自动更新 LRU 顺序
      */
     fun getSessionUiState(sessionId: String): ConversationUiState? {
-        return _sessionUiStates.value[sessionId]
+        return uiStateCache.get(sessionId)
     }
 
     init {
@@ -134,6 +140,13 @@ class ChatViewModel(
         getSessionListUseCase().firstOrNull()?.let { list ->
             _sessions.value = list
         }
+    }
+    
+    /**
+     * 获取最新的会话列表（一次性获取，用于 drawer 打开时刷新）
+     */
+    suspend fun getSessionsList(): List<SessionEntity> {
+        return getSessionListUseCase().firstOrNull() ?: emptyList()
     }
     
     fun searchSessions(query: String) {
@@ -267,8 +280,8 @@ class ChatViewModel(
                 // messages 会自动清空（通过 flatMapLatest 返回 emptyList）
                 _draft.value = null
             }
-            // 清理该会话的 UI 状态
-            _sessionUiStates.value = _sessionUiStates.value - sessionId
+            // 清理该会话的 UI 状态（从 LRU Cache 中移除）
+            uiStateCache.remove(sessionId)
             // 刷新会话列表
             loadSessions()
         }

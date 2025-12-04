@@ -27,20 +27,27 @@ import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.text.input.TextFieldValue
 import com.example.star.aiwork.R
 import com.example.star.aiwork.domain.model.Agent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 
 /**
  * 对话屏幕的 UI 状态容器。
  *
  * 管理对话界面的所有可变状态，包括消息列表、输入框状态、录音状态以及 AI 模型参数。
+ * 每个会话持有自己的协程作用域，用于管理该会话的所有协程（如 processMessage、rollbackAndRegenerate）。
  *
  * @property channelName 频道名称。
  * @property channelMembers 频道成员数量。
  * @property initialMessages 初始消息列表。
+ * @property coroutineScope 该会话的协程作用域，用于管理所有与该会话相关的协程。
  */
 class ConversationUiState(
     channelName: String, 
     val channelMembers: Int, 
-    initialMessages: List<Message>
+    initialMessages: List<Message>,
+    val coroutineScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 ) {
     // 频道名称使用可变状态，以便根据当前会话动态更新
     var channelName: String by mutableStateOf(channelName)
@@ -148,6 +155,14 @@ class ConversationUiState(
                 isLoading = false
             )
         }
+    }
+
+    /**
+     * 取消该会话的所有协程。
+     * 当会话被移除或切换时，应该调用此方法清理协程资源。
+     */
+    fun cancelAllCoroutines() {
+        coroutineScope.cancel()
     }
 }
 

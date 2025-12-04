@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.os.bundleOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -166,23 +167,31 @@ class ConversationFragment : Fragment() {
                 // 注意：不在消息内容变化时同步，以避免清空临时的加载占位消息
                 LaunchedEffect(currentSession?.id) {
                     currentSession?.let { session ->
-                        val sessionUiState = chatViewModel.getOrCreateSessionUiState(session.id, session.name)
+                        // 使用同一个 uiState 实例，确保一致性
                         // 清空现有消息
-                        while (sessionUiState.messages.isNotEmpty()) {
-                            sessionUiState.removeFirstMessage()
+                        while (uiState.messages.isNotEmpty()) {
+                            uiState.removeFirstMessage()
                         }
                         // 添加数据库中的消息
                         convertedMessages.forEach { msg ->
-                            sessionUiState.addMessage(msg)
+                            uiState.addMessage(msg)
                         }
+                        // 更新 channelName
+                        uiState.channelName = session.name.ifBlank { "新对话" }
+                        // 重置会话级别的 UI 状态字段
+                        uiState.textFieldValue = TextFieldValue()
+                        uiState.selectedImageUri = null
+                        uiState.isRecording = false
+                        uiState.isTranscribing = false
+                        uiState.pendingTranscription = ""
+                        uiState.isGenerating = false
                     }
                 }
 
                 // 当会话名称变化时，更新 UI 状态的 channelName
                 LaunchedEffect(currentSession?.name, currentSession?.id) {
                     currentSession?.let { session ->
-                        val sessionUiState = chatViewModel.getSessionUiState(session.id)
-                        sessionUiState?.channelName = session.name.ifBlank { "新对话" }
+                        uiState.channelName = session.name.ifBlank { "新对话" }
                     }
                 }
 

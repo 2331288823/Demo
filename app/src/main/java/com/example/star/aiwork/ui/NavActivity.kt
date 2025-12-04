@@ -83,7 +83,7 @@ class NavActivity : AppCompatActivity() {
                     val drawerOpen by mainViewModel.drawerShouldBeOpened.collectAsStateWithLifecycle()
 
                     val agents by mainViewModel.agents.collectAsStateWithLifecycle()
-                    val sessions by chatViewModel.sessions.collectAsStateWithLifecycle()
+                    val sessions by chatViewModel.sessions.collectAsStateWithLifecycle() // 保留订阅，用于回调函数
                     val currentSession by chatViewModel.currentSession.collectAsStateWithLifecycle()
                     val knownKnowledgeBases by mainViewModel.knownKnowledgeBases.collectAsStateWithLifecycle()
                     val isRagEnabled by mainViewModel.isRagEnabled.collectAsStateWithLifecycle()
@@ -142,7 +142,7 @@ class NavActivity : AppCompatActivity() {
                         drawerState = drawerState,
                         selectedMenu = currentSession?.id ?: "",
                         agents = agents,
-                        sessions = sessions,
+                        getSessions = { chatViewModel.getSessionsList() },
                         knownKnowledgeBases = knownKnowledgeBases,
                         isRagEnabled = isRagEnabled,
                         onChatClicked = { sessionId ->
