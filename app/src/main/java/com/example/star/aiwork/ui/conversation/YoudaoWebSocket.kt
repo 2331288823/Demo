@@ -1,6 +1,9 @@
 package com.example.star.aiwork.ui.conversation
 
 import android.util.Log
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -8,6 +11,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import org.json.JSONObject
+import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.UUID
@@ -18,6 +22,8 @@ import java.util.concurrent.TimeUnit
  *
  * 负责与有道语音识别 API 建立 WebSocket 连接,
  * 发送音频数据并接收识别结果。
+ *
+ * 也包含 TTS (语音合成) 功能。
  */
 class YoudaoWebSocket {
     private var webSocket: WebSocket? = null
@@ -29,6 +35,7 @@ class YoudaoWebSocket {
     private val appSecret = "adcF7pXU5MK2yfzVRN5OfJSSUVsIpLEg"
 
     var listener: TranscriptionListener? = null
+    var ttsListener: TtsListener? = null
 
     /**
      * 连接到有道语音识别服务
@@ -201,6 +208,72 @@ class YoudaoWebSocket {
     }
 
     /**
+     * 语音合成 (TTS)
+     * @param text 待合成的文本
+     */
+    fun synthesize(text: String) {
+        Log.d(TAG, "🗣️ Starting TTS synthesis for: '$text'")
+
+        val salt = UUID.randomUUID().toString()
+        val curtime = (System.currentTimeMillis() / 1000).toString()
+        
+        // 签名 input 计算规则
+        val input = if (text.length <= 20) {
+            text
+        } else {
+            "${text.substring(0, 10)}${text.length}${text.substring(text.length - 10)}"
+        }
+
+        val signStr = appKey + input + salt + curtime + appSecret
+        val sign = sha256(signStr)
+
+        val formBody = FormBody.Builder()
+            .add("q", text)
+            .add("appKey", appKey)
+            .add("salt", salt)
+            .add("sign", sign)
+            .add("signType", "v3")
+            .add("curtime", curtime)
+            .add("format", "mp3")
+            .add("speed", "1")
+            .add("volume", "1.00")
+            .add("voiceName", "youxiaoqin")
+            .build()
+
+        val request = Request.Builder()
+            .url("https://openapi.youdao.com/ttsapi")
+            .post(formBody)
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Log.e(TAG, "❌ TTS Request failed", e)
+                ttsListener?.onTtsError(e.message ?: "TTS request failed")
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val contentType = response.header("Content-Type")
+                Log.d(TAG, "🗣️ TTS Response Code: ${response.code}, Content-Type: $contentType")
+
+                if (response.isSuccessful && contentType?.contains("audio") == true) {
+                    val bytes = response.body?.bytes()
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        Log.d(TAG, "✅ TTS Audio received: ${bytes.size} bytes")
+                        ttsListener?.onTtsSuccess(bytes)
+                    } else {
+                        Log.e(TAG, "❌ TTS Response body is empty")
+                        ttsListener?.onTtsError("Empty audio response")
+                    }
+                } else {
+                    val jsonStr = response.body?.string()
+                    Log.e(TAG, "❌ TTS Error response: $jsonStr")
+                    ttsListener?.onTtsError(jsonStr ?: "Unknown error")
+                }
+            }
+        })
+    }
+
+    /**
      * SHA-256 加密
      */
     private fun sha256(input: String): String {
@@ -215,6 +288,14 @@ class YoudaoWebSocket {
     interface TranscriptionListener {
         fun onTranscriptionReceived(text: String, isFinal: Boolean)
         fun onError(error: String)
+    }
+
+    /**
+     * TTS 结果监听器
+     */
+    interface TtsListener {
+        fun onTtsSuccess(audioData: ByteArray)
+        fun onTtsError(error: String)
     }
 
     companion object {

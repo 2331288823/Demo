@@ -269,6 +269,12 @@ class NavActivity : AppCompatActivity() {
                         },
                         onRagEnabledChanged = { isEnabled ->
                             mainViewModel.updateRagEnabled(isEnabled)
+                        },
+                        onRealtimeChatClicked = {
+                            findNavController().navigate(R.id.nav_realtime_chat)
+                            scope.launch {
+                                drawerState.close()
+                            }
                         }
                     ) {
                         // 侧滑菜单的主要内容区域：嵌入基于 XML 的 Fragment 导航

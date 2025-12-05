@@ -38,6 +38,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
@@ -103,6 +104,7 @@ fun JetchatDrawer(
     onDeleteSession: (String) -> Unit = { },
     onDeleteAllSessions: () -> Unit = { },
     onRagEnabledChanged: (Boolean) -> Unit = { },
+    onRealtimeChatClicked: () -> Unit = { },
     agents: List<Agent> = emptyList(),
     sessions: List<SessionEntity> = emptyList(),
     knownKnowledgeBases: List<String> = emptyList(),
@@ -130,6 +132,7 @@ fun JetchatDrawer(
                         onDeleteSession = onDeleteSession,
                         onDeleteAllSessions = onDeleteAllSessions,
                         onRagEnabledChanged = onRagEnabledChanged,
+                        onRealtimeChatClicked = onRealtimeChatClicked,
                         agents = agents,
                         sessions = sessions,
                         knownKnowledgeBases = knownKnowledgeBases,
@@ -175,6 +178,7 @@ fun JetchatDrawerContent(
     onDeleteSession: (String) -> Unit,
     onDeleteAllSessions: () -> Unit,
     onRagEnabledChanged: (Boolean) -> Unit,
+    onRealtimeChatClicked: () -> Unit,
     agents: List<Agent>,
     sessions: List<SessionEntity>,
     knownKnowledgeBases: List<String>,
@@ -196,6 +200,10 @@ fun JetchatDrawerContent(
         DrawerHeader()
         DividerItem()
         NewChatItem(onNewChatClicked = onNewChatClicked)
+        
+        // 实时语音通话入口
+        RealtimeChatItem(onRealtimeChatClicked)
+
         DividerItem(modifier = Modifier.padding(horizontal = 30.dp))
         DrawerItemHeader("角色市场")
         MarketItem(onPromptMarketClicked)
@@ -487,6 +495,38 @@ private fun NewChatItem(onNewChatClicked: () -> Unit) {
         )
     }
 }
+
+/**
+ * 实时语音对话项组件。
+ *
+ * @param onRealtimeChatClicked 点击回调。
+ */
+@Composable
+private fun RealtimeChatItem(onRealtimeChatClicked: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .height(56.dp)
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onRealtimeChatClicked),
+        verticalAlignment = CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Default.Call,
+            tint = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp),
+            contentDescription = null,
+        )
+        Text(
+            "实时语音",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.padding(start = 12.dp),
+        )
+    }
+}
+
 
 /**
  * 角色广场项组件。
@@ -856,6 +896,7 @@ fun DrawerPreview() {
                     onDeleteSession = {},
                     onDeleteAllSessions = {},
                     onRagEnabledChanged = {},
+                    onRealtimeChatClicked = {},
                     agents = emptyList(),
                     sessions = emptyList(),
                     knownKnowledgeBases = listOf("doc1.pdf", "report_final.pdf"),
@@ -891,6 +932,7 @@ fun DrawerPreviewDark() {
                     onDeleteSession = {},
                     onDeleteAllSessions = {},
                     onRagEnabledChanged = {},
+                    onRealtimeChatClicked = {},
                     agents = emptyList(),
                     sessions = emptyList(),
                     knownKnowledgeBases = listOf("doc1.pdf", "report_final.pdf"),
