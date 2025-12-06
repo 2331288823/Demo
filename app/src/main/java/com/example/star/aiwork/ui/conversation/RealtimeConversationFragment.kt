@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -117,6 +118,9 @@ class RealtimeConversationFragment : Fragment() {
         return ComposeView(requireContext()).apply {
             setContent {
                 JetchatTheme {
+                    // 从 ViewModel 获取持久化的头像 URI
+                    val userAvatarUri by activityViewModel.userAvatarUri.collectAsStateWithLifecycle()
+
                     RealtimeChatScreen(
                         transcription = _transcription.value,
                         aiResponse = _aiResponse.value,
@@ -125,10 +129,14 @@ class RealtimeConversationFragment : Fragment() {
                         isSpeaking = _isSpeaking.value,
                         currentVoice = _currentVoice.value,
                         availableVoices = youdaoWebSocket?.availableVoices ?: emptyMap(),
+                        avatarUri = userAvatarUri?.let { Uri.parse(it) },
                         onToggleListening = { toggleListening() },
                         onVoiceChanged = { newVoice ->
                             _currentVoice.value = newVoice
                             youdaoWebSocket?.currentVoiceName = newVoice
+                        },
+                        onAvatarSelected = { uri ->
+                            activityViewModel.updateUserAvatar(uri)
                         }
                     )
                 }
@@ -590,17 +598,18 @@ fun RealtimeChatScreen(
     isSpeaking: Boolean,
     currentVoice: String,
     availableVoices: Map<String, String>,
+    avatarUri: Uri?,
     onToggleListening: () -> Unit,
-    onVoiceChanged: (String) -> Unit
+    onVoiceChanged: (String) -> Unit,
+    onAvatarSelected: (Uri) -> Unit
 ) {
     var showVoiceDialog by remember { mutableStateOf(false) }
-    var avatarUri by remember { mutableStateOf<Uri?>(null) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            avatarUri = uri
+            onAvatarSelected(uri)
         }
     }
 
