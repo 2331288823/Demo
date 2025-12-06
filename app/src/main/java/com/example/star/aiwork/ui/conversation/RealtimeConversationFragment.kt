@@ -36,11 +36,13 @@ import com.example.star.aiwork.infra.network.defaultOkHttpClient
 import com.example.star.aiwork.ui.MainViewModel
 import com.example.star.aiwork.ui.theme.JetchatTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
 
 class RealtimeConversationFragment : Fragment() {
 
@@ -58,6 +60,13 @@ class RealtimeConversationFragment : Fragment() {
     
     // 存储对话历史，用于上下文
     private val conversationHistory = mutableListOf<Pair<String, String>>()
+    
+    // 用于 TTS 播放队列
+    private val audioQueue = ConcurrentLinkedQueue<ByteArray>()
+    private var isPlayingQueue = false
+    
+    // 当前生成的文本缓冲区，用于检测句子边界
+    private val ttsTextBuffer = StringBuilder()
 
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
@@ -121,17 +130,16 @@ class RealtimeConversationFragment : Fragment() {
             ttsListener = object : YoudaoWebSocket.TtsListener {
                 override fun onTtsSuccess(audioData: ByteArray) {
                     lifecycleScope.launch {
-                        playAudio(audioData)
+                        Log.d("RealtimeChat", "TTS audio received, size: ${audioData.size}")
+                        audioQueue.offer(audioData)
+                        playNextInQueue()
                     }
                 }
 
                 override fun onTtsError(error: String) {
                     lifecycleScope.launch {
-                        Toast.makeText(context, "TTS Error: $error", Toast.LENGTH_SHORT).show()
-                        _isSpeaking.value = false
-                        _isProcessing.value = false
-                        // 出错后重新开始监听? 或者等待用户手动点击
-                        // startListening() 
+                        Log.e("RealtimeChat", "TTS Error: $error")
+                        // 可以选择 toast 提示，或者忽略错误
                     }
                 }
             }
@@ -156,6 +164,8 @@ class RealtimeConversationFragment : Fragment() {
         _isListening.value = true
         _isSpeaking.value = false // 如果正在说话，打断它
         stopAudioPlayback()
+        audioQueue.clear()
+        ttsTextBuffer.clear()
         
         _transcription.value = "Listening..."
         _aiResponse.value = ""
@@ -252,9 +262,18 @@ class RealtimeConversationFragment : Fragment() {
                 ).collect { chunk ->
                     responseBuilder.append(chunk)
                     _aiResponse.value = responseBuilder.toString()
+                    
+                    // 处理流式 TTS
+                    processStreamForTts(chunk)
                 }
                 
-                // 流结束
+                // 流结束，处理剩余的文本
+                val remainingText = ttsTextBuffer.toString().trim()
+                if (remainingText.isNotEmpty()) {
+                    speak(remainingText)
+                    ttsTextBuffer.clear()
+                }
+
                 val fullResponse = responseBuilder.toString()
                 _aiResponse.value = fullResponse
                 _isProcessing.value = false
@@ -265,9 +284,6 @@ class RealtimeConversationFragment : Fragment() {
                     conversationHistory.removeAt(0)
                 }
 
-                // TTS
-                speak(fullResponse)
-
             } catch (e: Exception) {
                 Log.e("RealtimeChat", "AI Request failed", e)
                 _aiResponse.value = "Error: ${e.message}"
@@ -276,9 +292,58 @@ class RealtimeConversationFragment : Fragment() {
         }
     }
     
+    /**
+     * 处理流式文本，检测句子边界并触发 TTS
+     */
+    private fun processStreamForTts(chunk: String) {
+        ttsTextBuffer.append(chunk)
+        
+        // 简单的标点符号分割逻辑
+        val bufferContent = ttsTextBuffer.toString()
+        val sentenceEndings = listOf("。", "！", "？", "\n", ".", "!", "?")
+        
+        var lastIndex = -1
+        for (ending in sentenceEndings) {
+            val index = bufferContent.lastIndexOf(ending)
+            if (index > lastIndex) {
+                lastIndex = index
+            }
+        }
+        
+        if (lastIndex != -1) {
+            // 提取完整句子
+            val sentence = bufferContent.substring(0, lastIndex + 1).trim()
+            if (sentence.isNotEmpty()) {
+                speak(sentence)
+            }
+            
+            // 移除已处理部分
+            ttsTextBuffer.delete(0, lastIndex + 1)
+        }
+    }
+    
     private fun speak(text: String) {
         _isSpeaking.value = true
+        Log.d("RealtimeChat", "Speaking: $text")
         youdaoWebSocket?.synthesize(text)
+    }
+
+    /**
+     * 播放队列中的下一个音频
+     */
+    private fun playNextInQueue() {
+        if (isPlayingQueue) return
+        
+        val audioData = audioQueue.poll()
+        if (audioData != null) {
+            isPlayingQueue = true
+            playAudio(audioData)
+        } else {
+            // 队列为空，如果AI处理已完成且没有剩余文本，则停止说话状态
+            if (!_isProcessing.value) {
+                _isSpeaking.value = false
+            }
+        }
     }
 
     private fun playAudio(audioData: ByteArray) {
@@ -289,22 +354,28 @@ class RealtimeConversationFragment : Fragment() {
             fos.write(audioData)
             fos.close()
 
-            stopAudioPlayback()
-
             mediaPlayer = MediaPlayer().apply {
                 setDataSource(tempFile.absolutePath)
                 prepare()
                 start()
                 setOnCompletionListener {
-                    _isSpeaking.value = false
-                    // 播放完毕后，可选：自动重新开始监听
-                    // startListening() 
+                    isPlayingQueue = false
+                    it.release()
+                    mediaPlayer = null
+                    // 播放下一个
+                    playNextInQueue()
+                }
+                setOnErrorListener { _, what, extra ->
+                    Log.e("RealtimeChat", "MediaPlayer error: $what, $extra")
+                    isPlayingQueue = false
+                    playNextInQueue()
+                    true
                 }
             }
         } catch (e: Exception) {
             Log.e("RealtimeChat", "Audio playback failed", e)
-            _isSpeaking.value = false
-            Toast.makeText(context, "Playback Error", Toast.LENGTH_SHORT).show()
+            isPlayingQueue = false
+            playNextInQueue()
         }
     }
     
@@ -316,6 +387,8 @@ class RealtimeConversationFragment : Fragment() {
             it.release()
         }
         mediaPlayer = null
+        audioQueue.clear()
+        isPlayingQueue = false
     }
 
     override fun onDestroyView() {
