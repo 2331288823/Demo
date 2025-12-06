@@ -30,12 +30,14 @@
     <string name="conversations">Conversations</string>
     <string name="profile">Profile</string>
     <string name="jumpBottom">跳到底部</string>
+
     <string name="send">Send</string>
     <string name="author_me">me</string>
     <string name="now">8:30 PM</string>
     <string name="members">%d members</string>
     <string name="textfield_hint">Message #composers</string>
     <string name="swipe_to_cancel_recording">&#x25C0; Swipe to cancel</string>
+
     <string name="emojis_label">Emojis</string>
     <string name="stickers_label">Stickers</string>
 
@@ -51,7 +53,6 @@
     <string name="lorem">Lorem or Ipsum</string>
 
     <!-- Accessibility descriptions -->
-
     <string name="emoji_selector_desc">Emoji selector</string>
     <string name="emoji_selector_bt_desc">Show Emoji selector</string>
     <string name="dm_desc">Direct Message</string>

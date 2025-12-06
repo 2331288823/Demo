@@ -81,16 +81,24 @@ class ConversationUiState(
     // 当前激活的 Agent
     var activeAgent: Agent? by mutableStateOf(null)
 
+    // ====== 语音输入模式状态 ======
+    var isVoiceMode: Boolean by mutableStateOf(false) // 是否处于语音输入模式（替换文本输入框为"按住说话"按钮）
+
     // 录音状态
     var isRecording: Boolean by mutableStateOf(false)
-    var isTranscribing: Boolean by mutableStateOf(false) // 新增：是否正在转换文字
-    var pendingTranscription: String by mutableStateOf("") // 新增：暂存转写文本（录音时实时显示）
+    var isTranscribing: Boolean by mutableStateOf(false) // 是否正在转换文字
+    var pendingTranscription: String by mutableStateOf("") // 暂存转写文本（录音时实时显示）
+
+    // 语音面板状态
+    var voiceInputStage: VoiceInputStage by mutableStateOf(VoiceInputStage.IDLE) // 语音输入阶段
+    var isCancelGesture: Boolean by mutableStateOf(false) // 是否处于取消手势状态（上滑）
+    var currentVolume: Float by mutableFloatStateOf(0f) // 当前音量（用于波形动画）
 
     // AI 生成状态
-    var isGenerating: Boolean by mutableStateOf(false) // 新增：是否正在生成回答
+    var isGenerating: Boolean by mutableStateOf(false) // 是否正在生成回答
 
     // 流式生成任务状态
-    var activeTaskId: String? by mutableStateOf(null) // 新增：当前活跃的流式生成任务ID
+    var activeTaskId: String? by mutableStateOf(null) // 当前活跃的流式生成任务ID
 
     // 输入框文本状态
     var textFieldValue: TextFieldValue by mutableStateOf(TextFieldValue())
