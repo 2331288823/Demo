@@ -174,6 +174,16 @@ class MainViewModel(
             initialValue = true
         )
 
+    /**
+     * 用户自定义头像 URI。
+     */
+    val userAvatarUri: StateFlow<String?> = userPreferencesRepository.userAvatarUri
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
+
     init {
         viewModelScope.launch {
             agentRepository.loadAgents()
@@ -338,6 +348,15 @@ class MainViewModel(
             ragService.retrieve(query).context
         } else {
             ""
+        }
+    }
+
+    /**
+     * 更新用户头像。
+     */
+    fun updateUserAvatar(uri: Uri?) {
+        viewModelScope.launch {
+            userPreferencesRepository.updateUserAvatarUri(uri?.toString())
         }
     }
 
