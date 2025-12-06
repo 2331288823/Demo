@@ -78,6 +78,7 @@ import androidx.compose.ui.text.TextRange
 import java.util.UUID
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.Alignment
+import com.example.star.aiwork.domain.usecase.GenerateChatNameUseCase
 
 /**
  * 对话屏幕的入口点。
@@ -128,11 +129,27 @@ fun ConversationContent(
     searchQuery: String,
     onSearchQueryChanged: (String) -> Unit,
     searchResults: List<SessionEntity>,
-    onSessionSelected: (SessionEntity) -> Unit
+    onSessionSelected: (SessionEntity) -> Unit,
+    generateChatNameUseCase: GenerateChatNameUseCase? = null
 ) {
     val authorMe = stringResource(R.string.author_me)
     val timeNow = stringResource(id = R.string.now)
     val context = LocalContext.current
+
+    // ========== 新增初始化逻辑开始 ==========
+    // 初始化 uiState 中的 UseCase 和 Provider/Model
+    LaunchedEffect(generateChatNameUseCase, activeProviderId, activeModelId, providerSettings) {
+        uiState.generateChatNameUseCase = generateChatNameUseCase
+
+        // 查找当前活跃的 Provider 和 Model
+        val provider = providerSettings.find { it.id == activeProviderId }
+        val model = provider?.models?.find { it.id == activeModelId }
+            ?: provider?.models?.firstOrNull()
+
+        uiState.activeProviderSetting = provider
+        uiState.activeModel = model
+    }
+    // ========== 新增初始化逻辑结束 ==========
 
     val scrollState = rememberLazyListState()
     val topBarState = rememberTopAppBarState()
@@ -298,7 +315,8 @@ fun ConversationContent(
                 model = model,
                 retrieveKnowledge = retrieveKnowledge,
                 scope = scope,
-                isGenerating = uiState.isGenerating
+                isGenerating = uiState.isGenerating,
+                uiState = uiState  // ← 新增这一行
             )
 
             // ====== 修改后的 UserInput 调用 ======
@@ -428,7 +446,8 @@ fun ConversationPreview() {
             searchQuery = "",
             onSearchQueryChanged = {},
             searchResults = emptyList(),
-            onSessionSelected = {}
+            onSessionSelected = {},
+            generateChatNameUseCase = null  // ← 新增参数
         )
     }
 }

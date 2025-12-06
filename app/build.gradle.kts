@@ -90,6 +90,7 @@ android {
 }
 
 dependencies {
+    implementation(libs.androidx.runtime)
     //implementation(libs.room.compiler)
     val composeBom = platform(libs.androidx.compose.bom)
     implementation(composeBom)
