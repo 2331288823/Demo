@@ -44,14 +44,14 @@ import kotlinx.coroutines.cancel
  * @property coroutineScope 该会话的协程作用域，用于管理所有与该会话相关的协程。
  */
 class ConversationUiState(
-    channelName: String, 
-    val channelMembers: Int, 
+    channelName: String,
+    val channelMembers: Int,
     initialMessages: List<Message>,
     val coroutineScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 ) {
     // 频道名称使用可变状态，以便根据当前会话动态更新
     var channelName: String by mutableStateOf(channelName)
-    
+
     // 使用 SnapshotStateList 来存储消息，确保列表变更时能触发 Compose 重组
     private val _messages: MutableList<Message> = initialMessages.toMutableStateList()
     val messages: List<Message> = _messages
@@ -64,7 +64,7 @@ class ConversationUiState(
     // Auto-Agent Loop (轻量自动化循环) 状态
     var isAutoLoopEnabled: Boolean by mutableStateOf(false)
     var maxLoopCount: Int by mutableIntStateOf(3)
-    
+
     // Auto-Loop Planner 模型选择 (如果为 null，则使用当前对话模型)
     var autoLoopProviderId: String? by mutableStateOf(null)
     var autoLoopModelId: String? by mutableStateOf(null)
@@ -77,16 +77,24 @@ class ConversationUiState(
     // 当前激活的 Agent
     var activeAgent: Agent? by mutableStateOf(null)
 
+    // ====== 语音输入模式状态 ======
+    var isVoiceMode: Boolean by mutableStateOf(false) // 是否处于语音输入模式（替换文本输入框为"按住说话"按钮）
+
     // 录音状态
     var isRecording: Boolean by mutableStateOf(false)
-    var isTranscribing: Boolean by mutableStateOf(false) // 新增：是否正在转换文字
-    var pendingTranscription: String by mutableStateOf("") // 新增：暂存转写文本（录音时实时显示）
+    var isTranscribing: Boolean by mutableStateOf(false) // 是否正在转换文字
+    var pendingTranscription: String by mutableStateOf("") // 暂存转写文本（录音时实时显示）
+
+    // 语音面板状态
+    var voiceInputStage: VoiceInputStage by mutableStateOf(VoiceInputStage.IDLE) // 语音输入阶段
+    var isCancelGesture: Boolean by mutableStateOf(false) // 是否处于取消手势状态（上滑）
+    var currentVolume: Float by mutableFloatStateOf(0f) // 当前音量（用于波形动画）
 
     // AI 生成状态
-    var isGenerating: Boolean by mutableStateOf(false) // 新增：是否正在生成回答
-    
+    var isGenerating: Boolean by mutableStateOf(false) // 是否正在生成回答
+
     // 流式生成任务状态
-    var activeTaskId: String? by mutableStateOf(null) // 新增：当前活跃的流式生成任务ID
+    var activeTaskId: String? by mutableStateOf(null) // 当前活跃的流式生成任务ID
 
     // 输入框文本状态
     var textFieldValue: TextFieldValue by mutableStateOf(TextFieldValue())
@@ -147,8 +155,8 @@ class ConversationUiState(
      * 移除最后一条助手消息（用于回滚功能）
      */
     fun removeLastAssistantMessage(authorMe: String) {
-        val index = _messages.indexOfFirst { 
-            it.author != authorMe && it.author != "System" 
+        val index = _messages.indexOfFirst {
+            it.author != authorMe && it.author != "System"
         }
         if (index >= 0) {
             _messages.removeAt(index)

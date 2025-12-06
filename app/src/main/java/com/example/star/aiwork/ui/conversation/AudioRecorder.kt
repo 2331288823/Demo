@@ -29,6 +29,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /**
  * 音频录制器。
@@ -60,11 +61,13 @@ class AudioRecorder(private val context: Context) {
      *
      * @param onAudioData 音频数据回调,当有新的音频数据块可用时触发。
      * @param onError 错误回调,当发生异常时触发。
+     * @param onVolumeChanged 音量变化回调（0f-1f）。
      */
     @SuppressLint("MissingPermission")
     fun startRecording(
         onAudioData: (ByteArray, Int) -> Unit,
-        onError: (Exception) -> Unit
+        onError: (Exception) -> Unit,
+        onVolumeChanged: ((Float) -> Unit)? = null
     ) {
         // 防止重复启动
         if (recordingJob?.isActive == true) {
@@ -111,6 +114,12 @@ class AudioRecorder(private val context: Context) {
                             totalBytesRead += bytesRead
                             onAudioData(buffer.copyOf(bytesRead), bytesRead)
 
+                            // 计算音量（振幅）
+                            onVolumeChanged?.let {
+                                val volume = calculateVolume(buffer, bytesRead)
+                                it(volume)
+                            }
+
                             // 每秒记录一次日志 (16000 采样率 * 2 字节 = 32000 字节/秒)
                             if (totalBytesRead % 32000 < bufferSize) {
                                 Log.d("AudioRecorder", "Read $bytesRead bytes (total: $totalBytesRead)")
@@ -142,6 +151,22 @@ class AudioRecorder(private val context: Context) {
             Log.e("AudioRecorder", "Failed to start recording", e)
             onError(e)
         }
+    }
+
+    /**
+     * 计算音频振幅（音量）
+     * @return 0f - 1f 之间的值
+     */
+    private fun calculateVolume(buffer: ByteArray, size: Int): Float {
+        var sum = 0L
+        for (i in 0 until size step 2) {
+            // PCM 16bit 是小端序
+            val sample = (buffer[i].toInt() and 0xFF) or (buffer[i + 1].toInt() shl 8)
+            sum += abs(sample.toShort().toLong())
+        }
+        val average = sum / (size / 2)
+        // 归一化到 0-1 范围（Short.MAX_VALUE = 32767）
+        return (average.toFloat() / 32767f).coerceIn(0f, 1f)
     }
 
     /**
