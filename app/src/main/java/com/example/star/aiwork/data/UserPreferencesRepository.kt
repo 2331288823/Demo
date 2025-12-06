@@ -65,6 +65,7 @@ class UserPreferencesRepository(private val context: Context) {
         val FALLBACK_MODEL_ID = stringPreferencesKey("fallback_model_id")
         val IS_FALLBACK_ENABLED = booleanPreferencesKey("is_fallback_enabled")
         val IS_RAG_ENABLED = booleanPreferencesKey("is_rag_enabled")
+        val USER_AVATAR_URI = stringPreferencesKey("user_avatar_uri")
     }
 
     /**
@@ -259,6 +260,27 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun updateRagEnabled(isEnabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.IS_RAG_ENABLED] = isEnabled
+        }
+    }
+
+    /**
+     * 用户头像 URI 流。
+     */
+    val userAvatarUri: Flow<String?> = context.dataStore.data
+        .map { preferences ->
+            preferences[PreferencesKeys.USER_AVATAR_URI]
+        }
+
+    /**
+     * 更新用户头像 URI。
+     */
+    suspend fun updateUserAvatarUri(uri: String?) {
+        context.dataStore.edit { preferences ->
+            if (uri == null) {
+                preferences.remove(PreferencesKeys.USER_AVATAR_URI)
+            } else {
+                preferences[PreferencesKeys.USER_AVATAR_URI] = uri
+            }
         }
     }
 }
