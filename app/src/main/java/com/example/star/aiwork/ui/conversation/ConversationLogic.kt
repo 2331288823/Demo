@@ -201,11 +201,6 @@ class ConversationLogic(
         retrieveKnowledge: suspend (String) -> String = { "" },
         isRetry: Boolean = false
     ) {
-        // Memory Trigger Filter: 检测并保存记忆
-        if (!isAutoTriggered) {
-            memoryTriggerFilter.processMemoryIfNeeded(inputContent)
-        }
-        
         // Session management (New Chat / Rename)
         if (isNewChat(sessionId)) {
             onPersistNewChatSession(sessionId)
@@ -324,8 +319,8 @@ class ConversationLogic(
                     return
                 }
 
-                // Construct Messages
-                val messagesToSend = MessageConstructionHelper.constructMessages(
+                // Construct Messages (先搜索 top-k，这会计算 embedding)
+                val constructionResult = MessageConstructionHelper.constructMessages(
                     uiState = uiState,
                     authorMe = authorMe,
                     inputContent = inputContent,
@@ -337,6 +332,9 @@ class ConversationLogic(
                     searchEmbeddingUseCase = searchEmbeddingUseCase,
                     topK = embeddingTopK
                 )
+                
+                val messagesToSend = constructionResult.messages
+                val computedEmbedding = constructionResult.computedEmbedding
 
                 val params = TextGenerationParams(
                     model = model,
@@ -365,6 +363,41 @@ class ConversationLogic(
                     loopCount = loopCount
                 )
 
+                // 打印最终发送给模型的完整消息
+                Log.d("ConversationLogic", "=".repeat(100))
+                Log.d("ConversationLogic", "📤 最终发送给模型的消息 (共 ${messagesToSend.size} 条):")
+                Log.d("ConversationLogic", "模型: ${model.modelId}, 会话ID: $sessionId")
+                messagesToSend.forEachIndexed { index, message ->
+                    val roleName = message.role.name
+                    val contentBuilder = StringBuilder()
+                    
+                    message.parts.forEach { part ->
+                        when (part) {
+                            is com.example.star.aiwork.ui.ai.UIMessagePart.Text -> {
+                                val text = part.text
+                                contentBuilder.append(text)
+                            }
+                            is com.example.star.aiwork.ui.ai.UIMessagePart.Image -> {
+                                contentBuilder.append("\n[图片: ${part.url.take(100)}${if (part.url.length > 100) "..." else ""}]")
+                            }
+                            else -> {
+                                contentBuilder.append("\n[其他类型: ${part::class.simpleName}]")
+                            }
+                        }
+                    }
+                    
+                    val content = contentBuilder.toString().trim()
+                    val displayContent = if (content.length > 500) {
+                        content.take(500) + "... [已截断，总长度: ${content.length}]"
+                    } else {
+                        content
+                    }
+                    Log.d("ConversationLogic", "")
+                    Log.d("ConversationLogic", "  [${index + 1}] $roleName:")
+                    Log.d("ConversationLogic", "    $displayContent")
+                }
+                Log.d("ConversationLogic", "=".repeat(100))
+
                 val sendResult = sendMessageUseCase(
                     sessionId = sessionId,
                     userMessage = userMessage,
@@ -378,6 +411,14 @@ class ConversationLogic(
                     uiState.activeTaskId = sendResult.taskId
                 }
                 isCancelled = false
+                
+                // 异步检查是否需要保存记忆（使用已计算的 embedding，避免重复计算）
+                // 注意：processMemoryIfNeededWithEmbedding 内部已经使用 withContext(Dispatchers.IO)
+                if (!isAutoTriggered && computedEmbedding != null) {
+                    streamingScope.launch {
+                        memoryTriggerFilter.processMemoryIfNeededWithEmbedding(inputContent, computedEmbedding)
+                    }
+                }
 
                 // Streaming Response Handling
                 val fullResponse = streamingResponseHandler.handleStreaming(

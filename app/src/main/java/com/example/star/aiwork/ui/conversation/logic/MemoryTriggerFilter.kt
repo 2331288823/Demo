@@ -115,20 +115,59 @@ class MemoryTriggerFilter(
                 val embedding = computeEmbeddingUseCase(text)
                 
                 if (embedding != null) {
-                    // 创建 Embedding 对象并保存
-                    val embeddingModel = com.example.star.aiwork.domain.model.embedding.Embedding(
-                        id = 0, // 数据库会自动生成
-                        text = text,
-                        embedding = embedding
-                    )
-                    
-                    saveEmbeddingUseCase(embeddingModel)
+                    saveMemoryWithEmbedding(text, embedding)
                 }
             }
         } catch (e: Exception) {
             // 静默处理错误，不影响正常消息流程
             android.util.Log.e("MemoryTriggerFilter", "Failed to save memory: ${e.message}", e)
         }
+    }
+
+    /**
+     * 使用已计算的嵌入向量保存记忆
+     * 如果输入匹配触发模式，则直接使用提供的嵌入向量保存，避免重复计算
+     * 
+     * @param text 用户输入的文本
+     * @param embedding 已计算的嵌入向量
+     */
+    suspend fun processMemoryIfNeededWithEmbedding(text: String, embedding: FloatArray) {
+        if (!shouldSaveAsMemory(text)) {
+            return
+        }
+        
+        // 如果用例未提供，则跳过
+        if (saveEmbeddingUseCase == null) {
+            return
+        }
+        
+        try {
+            // 在后台线程异步执行，不阻塞消息发送
+            withContext(Dispatchers.IO) {
+                saveMemoryWithEmbedding(text, embedding)
+            }
+        } catch (e: Exception) {
+            // 静默处理错误，不影响正常消息流程
+            android.util.Log.e("MemoryTriggerFilter", "Failed to save memory: ${e.message}", e)
+        }
+    }
+
+    /**
+     * 使用已计算的嵌入向量保存记忆的内部方法
+     */
+    private suspend fun saveMemoryWithEmbedding(text: String, embedding: FloatArray) {
+        if (saveEmbeddingUseCase == null) {
+            return
+        }
+        
+        // 创建 Embedding 对象并保存
+        val embeddingModel = com.example.star.aiwork.domain.model.embedding.Embedding(
+            id = 0, // 数据库会自动生成
+            text = text,
+            embedding = embedding
+        )
+        
+        saveEmbeddingUseCase(embeddingModel)
     }
 }
 

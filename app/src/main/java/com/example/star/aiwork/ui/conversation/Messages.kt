@@ -228,7 +228,7 @@ fun Messages(
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
         } else {
-            Log.d("Messages", "没有预览卡片，不显示边栏")
+            //Log.d("Messages", "没有预览卡片，不显示边栏")
         }
     }
 }
