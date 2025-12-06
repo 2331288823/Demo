@@ -59,4 +59,15 @@ class Converters {
     fun toMessageStatus(status: String): MessageStatus {
         return MessageStatus.valueOf(status)
     }
+
+    @TypeConverter
+    fun fromFloatArray(array: FloatArray): String {
+        return array.joinToString(",")
+    }
+
+    @TypeConverter
+    fun toFloatArray(data: String): FloatArray {
+        if (data.isEmpty()) return floatArrayOf()
+        return data.split(",").map { it.toFloat() }.toFloatArray()
+    }
 }
