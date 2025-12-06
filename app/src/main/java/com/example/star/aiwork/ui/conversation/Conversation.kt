@@ -108,7 +108,7 @@ import androidx.compose.ui.Alignment
 @Composable
 fun ConversationContent(
     uiState: ConversationUiState,
-    logic: ConversationLogic, // ADDED
+    logic: ConversationLogic,
     navigateToProfile: (String) -> Unit,
     modifier: Modifier = Modifier,
     onNavIconPressed: () -> Unit = { },
@@ -134,17 +134,13 @@ fun ConversationContent(
     val timeNow = stringResource(id = R.string.now)
     val context = LocalContext.current
 
-    // 列表滚动和顶部应用栏行为的状态
     val scrollState = rememberLazyListState()
     val topBarState = rememberTopAppBarState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(topBarState)
     val scope = rememberCoroutineScope()
 
-    // 显示模型设置对话框的状态
     var showSettingsDialog by remember { mutableStateOf(false) }
 
-    // 将从 ViewModel 传递的参数与 UiState 同步
-    // 这确保了 UI 反映持久化的设置
     LaunchedEffect(temperature, maxTokens, streamResponse, isFallbackEnabled, fallbackProviderId, fallbackModelId) {
         uiState.temperature = temperature
         uiState.maxTokens = maxTokens
@@ -154,22 +150,14 @@ fun ConversationContent(
         uiState.fallbackModelId = fallbackModelId
     }
 
-    // 拖放视觉状态
-    var background by remember {
-        mutableStateOf(Color.Transparent)
-    }
+    var background by remember { mutableStateOf(Color.Transparent) }
+    var borderStroke by remember { mutableStateOf(Color.Transparent) }
 
-    var borderStroke by remember {
-        mutableStateOf(Color.Transparent)
-    }
-
-    // 如果请求，显示模型设置对话框
     if (showSettingsDialog) {
         ModelSettingsDialog(
             uiState = uiState,
             providerSettings = providerSettings,
             onDismissRequest = {
-                // 当对话框关闭时保存设置
                 onUpdateSettings(uiState.temperature, uiState.maxTokens, uiState.streamResponse)
                 onUpdateFallbackSettings(uiState.isFallbackEnabled, uiState.fallbackProviderId, uiState.fallbackModelId)
                 showSettingsDialog = false
@@ -177,21 +165,14 @@ fun ConversationContent(
         )
     }
 
-    // 拖放回调处理
     val dragAndDropCallback = remember {
         object : DragAndDropTarget {
             override fun onDrop(event: DragAndDropEvent): Boolean {
                 val clipData = event.toAndroidDragEvent().clipData
-
-                if (clipData.itemCount < 1) {
-                    return false
-                }
-
-                // 将拖放的文本添加为新消息
+                if (clipData.itemCount < 1) return false
                 uiState.addMessage(
                     Message(authorMe, clipData.getItemAt(0).text.toString(), timeNow),
                 )
-
                 return true
             }
 
@@ -218,48 +199,29 @@ fun ConversationContent(
         }
     }
 
-    // 根据 ID 选择当前的 ProviderSetting 和 Model
-    val providerSetting = remember(providerSettings, activeProviderId) { 
-        providerSettings.find { it.id == activeProviderId } ?: providerSettings.firstOrNull() 
+    val providerSetting = remember(providerSettings, activeProviderId) {
+        providerSettings.find { it.id == activeProviderId } ?: providerSettings.firstOrNull()
     }
     val model = remember(providerSetting, activeModelId) {
         providerSetting?.models?.find { it.modelId == activeModelId } ?: providerSetting?.models?.firstOrNull()
     }
 
-    // REMOVED: No longer create ConversationLogic internally
-
-    // 初始化用于语音转文本的音频录制器和 WebSocket
+    // ====== 语音识别初始化 ======
     val audioRecorder = remember { AudioRecorder(context) }
-
-    // 跟踪挂起的部分文本长度，以便在实时转录期间正确替换它
     var lastPartialLength by remember { mutableIntStateOf(0) }
 
-    // 处理 ASR 结果的转录监听器
-    // ⚠️ 注意：uiState 会随着会话切换而变化，所以 listener 也会重新创建。
     val transcriptionListener = remember(scope, uiState) {
         object : YoudaoWebSocket.TranscriptionListener {
             override fun onTranscriptionReceived(text: String, isFinal: Boolean) {
                 scope.launch(Dispatchers.Main) {
-                    val currentText = uiState.textFieldValue.text
-
-                    // 删除以前的部分文本（如果有），以便使用新的部分或最终结果进行更新
-                    val safeCurrentText = if (currentText.length >= lastPartialLength) {
-                        currentText.dropLast(lastPartialLength)
+                    // 更新 pendingTranscription
+                    uiState.pendingTranscription = if (isFinal) {
+                        uiState.pendingTranscription + text
                     } else {
-                        currentText // 通常不应该发生
-                    }
-
-                    val newText = safeCurrentText + text
-
-                    uiState.textFieldValue = uiState.textFieldValue.copy(
-                        text = newText,
-                        selection = TextRange(newText.length)
-                    )
-
-                    lastPartialLength = if (isFinal) {
-                        0
-                    } else {
-                        text.length
+                        // 部分结果：替换上一次的部分结果
+                        val previousFinal = uiState.pendingTranscription.dropLast(lastPartialLength)
+                        lastPartialLength = text.length
+                        previousFinal + text
                     }
                 }
             }
@@ -273,28 +235,21 @@ fun ConversationContent(
         }
     }
 
-    // ⚠️ 修复：当 transcriptionListener 更新时，必须重新赋值给 WebSocket，否则 WebSocket 会持有旧的 listener（指向旧的 uiState）
-    val youdaoWebSocket = remember {
-        YoudaoWebSocket()
-    }
-    // 使用 SideEffect 确保每次重组如果 listener 变了都更新进去
+    val youdaoWebSocket = remember { YoudaoWebSocket() }
     SideEffect {
         youdaoWebSocket.listener = transcriptionListener
     }
 
-    // 音频录制的权限启动器
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
         if (isGranted) {
-             // Permission granted, trying to start recording again... 
-             Toast.makeText(context, "Permission granted, press record again", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Permission granted, press record again", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(context, "需要录音权限才能使用语音功能", Toast.LENGTH_SHORT).show()
         }
     }
 
-    // 在 dispose 时清理资源
     DisposableEffect(Unit) {
         onDispose {
             youdaoWebSocket.close()
@@ -317,118 +272,113 @@ fun ConversationContent(
                 onSessionSelected = onSessionSelected
             )
         },
-        // 排除 ime 和导航栏内边距，以便由 UserInput composable 添加
         contentWindowInsets = ScaffoldDefaults
             .contentWindowInsets
             .exclude(WindowInsets.navigationBars)
             .exclude(WindowInsets.ime),
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
     ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
+        Column(
+            Modifier.fillMaxSize().padding(paddingValues)
+                .background(color = background)
+                .border(width = 2.dp, color = borderStroke)
+                .dragAndDropTarget(shouldStartDragAndDrop = { event ->
+                    event
+                        .mimeTypes()
+                        .contains(ClipDescription.MIMETYPE_TEXT_PLAIN)
+                }, target = dragAndDropCallback),
         ) {
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .background(color = background)
-                    .border(width = 2.dp, color = borderStroke)
-                    .dragAndDropTarget(
-                        shouldStartDragAndDrop = { event ->
-                            event
-                                .mimeTypes()
-                                .contains(
-                                    ClipDescription.MIMETYPE_TEXT_PLAIN,
-                                )
-                        }, target = dragAndDropCallback
-                    ),
-            ) {
-                // 消息列表
-                Messages(
-                    messages = uiState.messages,
-                    navigateToProfile = navigateToProfile,
-                    modifier = Modifier.weight(1f),
-                    scrollState = scrollState,
-                    logic = logic,
-                    providerSetting = providerSetting,
-                    model = model,
-                    retrieveKnowledge = retrieveKnowledge,
-                    scope = scope,
-                    isGenerating = uiState.isGenerating
-                )
+            Messages(
+                messages = uiState.messages,
+                navigateToProfile = navigateToProfile,
+                modifier = Modifier.weight(1f),
+                scrollState = scrollState,
+                logic = logic,
+                providerSetting = providerSetting,
+                model = model,
+                retrieveKnowledge = retrieveKnowledge,
+                scope = scope,
+                isGenerating = uiState.isGenerating
+            )
 
-                // 用户输入区域
-                UserInput(
-                    selectedImageUri = uiState.selectedImageUri,
-                    onImageSelected = { uri -> uiState.selectedImageUri = uri },
-                    onMessageSent = { content ->
-                        uiState.isGenerating = true
-                        scope.launch {
-                            logic.processMessage(
-                                inputContent = content,
-                                providerSetting = providerSetting,
-                                model = model,
-                                retrieveKnowledge = retrieveKnowledge
+            // ====== 修改后的 UserInput 调用 ======
+            UserInput(
+                selectedImageUri = uiState.selectedImageUri,
+                onImageSelected = { uri -> uiState.selectedImageUri = uri },
+                onMessageSent = { content ->
+                    uiState.isGenerating = true
+                    scope.launch {
+                        logic.processMessage(
+                            inputContent = content,
+                            providerSetting = providerSetting,
+                            model = model,
+                            retrieveKnowledge = retrieveKnowledge
+                        )
+                    }
+                },
+                resetScroll = {
+                    scope.launch {
+                        scrollState.scrollToItem(0)
+                    }
+                },
+                modifier = Modifier.navigationBarsPadding().imePadding(),
+                // ====== 新增的语音模式相关参数 ======
+                isVoiceMode = uiState.isVoiceMode,
+                onVoiceModeChanged = { uiState.isVoiceMode = it },
+                voiceInputStage = uiState.voiceInputStage,
+                onVoiceStageChanged = { uiState.voiceInputStage = it },
+                pendingTranscription = uiState.pendingTranscription,
+                onTranscriptionChanged = { uiState.pendingTranscription = it },
+                currentVolume = uiState.currentVolume,
+                onVolumeChanged = { uiState.currentVolume = it },
+                onStartRecording = {
+                    if (ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        uiState.isRecording = true
+                        lastPartialLength = 0
+                        uiState.pendingTranscription = "" // 清空之前的转写
+                        scope.launch(Dispatchers.IO) {
+                            youdaoWebSocket.connect()
+                            audioRecorder.startRecording(
+                                onAudioData = { data, size ->
+                                    Log.d("VoiceInput", "📤 Sending $size bytes to Youdao WebSocket")
+                                    youdaoWebSocket.sendAudio(data, size)
+                                },
+                                onError = { error ->
+                                    Log.e("VoiceInput", "❌ Recording error: ${error.message}")
+                                    scope.launch {
+                                        Toast.makeText(context, "录音失败: ${error.message}", Toast.LENGTH_SHORT).show()
+                                    }
+                                    uiState.isRecording = false
+                                },
+                                onVolumeChanged = { volume ->
+                                    uiState.currentVolume = volume
+                                }
                             )
                         }
-                    },
-                    resetScroll = {
-                        scope.launch {
-                            scrollState.scrollToItem(0)
-                        }
-                    },
-                    modifier = Modifier.navigationBarsPadding().imePadding(),
-                    onStartRecording = {
-                        if (ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.RECORD_AUDIO
-                            ) == PackageManager.PERMISSION_GRANTED
-                        ) {
-                            uiState.isRecording = true
-                            lastPartialLength = 0
-                            scope.launch(Dispatchers.IO) {
-                                youdaoWebSocket.connect()
-                                audioRecorder.startRecording(
-                                    onAudioData = { data, size ->
-                                        Log.d("VoiceInput", "📤 Sending $size bytes to Youdao WebSocket")
-                                        youdaoWebSocket.sendAudio(data, size)
-                                    },
-                                    onError = { error ->
-                                        Log.e("VoiceInput", "❌ Recording error: ${error.message}")
-                                        scope.launch {
-                                            Toast.makeText(
-                                                context,
-                                                "录音失败: ${error.message}",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
-                                        uiState.isRecording = false
-                                    }
-                                )
-                            }
-                        } else {
-                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        }
-                    },
-                    onStopRecording = {
-                        if (uiState.isRecording) {
-                            uiState.isRecording = false
-                            audioRecorder.stopRecording()
-                            youdaoWebSocket.close()
-                        }
-                    },
-                    isRecording = uiState.isRecording,
-                    isGenerating = uiState.isGenerating,
-                    onPauseStream = {
-                        scope.launch {
-                            logic.cancelStreaming()
-                        }
-                    },
-                    textFieldValue = uiState.textFieldValue,
-                    onTextChanged = { uiState.textFieldValue = it }
-                )
-            }
+                    } else {
+                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                onStopRecording = {
+                    if (uiState.isRecording) {
+                        uiState.isRecording = false
+                        audioRecorder.stopRecording()
+                        youdaoWebSocket.close()
+                    }
+                },
+                isGenerating = uiState.isGenerating,
+                onPauseStream = {
+                    scope.launch {
+                        logic.cancelStreaming()
+                    }
+                },
+                textFieldValue = uiState.textFieldValue,
+                onTextChanged = { uiState.textFieldValue = it }
+            )
         }
     }
 }
@@ -437,18 +387,14 @@ fun ConversationContent(
 @Composable
 fun ConversationPreview() {
     JetchatTheme {
-        // For preview purposes, we create dummy instances of the dependencies.
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
 
-        // Fix: Create OkHttpClient
         val okHttpClient = remember { defaultOkHttpClient() }
-        
         val sseClient = SseClient(okHttpClient)
         val remoteDataSource = StreamingChatRemoteDataSource(sseClient)
-        // Fix: Pass okHttpClient to AiRepositoryImpl
         val aiRepository = AiRepositoryImpl(remoteDataSource, okHttpClient)
-        
+
         val messageLocalDataSource = MessageLocalDataSourceImpl(context)
         val sessionLocalDataSource = com.example.star.aiwork.data.local.datasource.SessionLocalDataSourceImpl(context)
         val persistenceGateway = MessagePersistenceGatewayImpl(messageLocalDataSource, sessionLocalDataSource)
@@ -456,7 +402,6 @@ fun ConversationPreview() {
         val sendMessageUseCase = SendMessageUseCase(aiRepository, persistenceGateway, scope)
         val pauseStreamingUseCase = PauseStreamingUseCase(aiRepository)
         val rollbackMessageUseCase = RollbackMessageUseCase(aiRepository, persistenceGateway)
-        // Fix: Create ImageGenerationUseCase
         val imageGenerationUseCase = ImageGenerationUseCase(aiRepository)
 
         val previewLogic = ConversationLogic(
@@ -467,8 +412,7 @@ fun ConversationPreview() {
             sendMessageUseCase = sendMessageUseCase,
             pauseStreamingUseCase = pauseStreamingUseCase,
             rollbackMessageUseCase = rollbackMessageUseCase,
-            imageGenerationUseCase = imageGenerationUseCase, // Fix: Pass imageGenerationUseCase
-            generateChatNameUseCase = null, // Preview doesn't need chat name generation
+            imageGenerationUseCase = imageGenerationUseCase,
             sessionId = "123",
             getProviderSettings = { emptyList() },
             persistenceGateway = persistenceGateway,
