@@ -16,9 +16,18 @@ import com.example.star.aiwork.domain.model.ProviderSetting
 
 internal fun List<ChatDataItem>.toAiMessages(): List<AiMessage> =
     map { chat ->
+        // 如果存在 imageBase64 数据，将其注入到 content 中的 [image] 占位符
+        // 这样 OpenAIStreamingRemoteDataSource 就能解析出图片数据
+        // 注意：ChatDataItem 目前只存储一个 imageBase64，如果有多张图片，这里可能会有局限性
+        val finalContent = if (!chat.imageBase64.isNullOrEmpty() && chat.content.contains("[image]")) {
+            chat.content.replace("[image]", "[image:${chat.imageBase64}]")
+        } else {
+            chat.content
+        }
+
         AiMessage(
             role = chat.role.toAiMessageRole(),
-            content = chat.content
+            content = finalContent
         )
     }
 

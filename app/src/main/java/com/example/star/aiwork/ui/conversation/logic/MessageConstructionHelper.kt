@@ -154,6 +154,7 @@ object MessageConstructionHelper {
     fun toChatDataItem(message: UIMessage): ChatDataItem {
         val builder = StringBuilder()
         var localFilePath: String? = null
+        var imageBase64: String? = null
 
         message.parts.forEach { part ->
             when (part) {
@@ -164,6 +165,8 @@ object MessageConstructionHelper {
                     if (builder.isNotEmpty()) builder.append(" ")
                     builder.append("[image]")
                     localFilePath = part.originalUri
+                    // Save the base64 url (data:image/...) to imageBase64 field for transmission
+                    imageBase64 = part.url
                 }
                 else -> {}
             }
@@ -171,7 +174,8 @@ object MessageConstructionHelper {
         return ChatDataItem(
             role = message.role.name.lowercase(),
             content = builder.toString().trim(),
-            localFilePath = localFilePath
+            localFilePath = localFilePath,
+            imageBase64 = imageBase64
         )
     }
 

@@ -1,6 +1,7 @@
 package com.example.star.aiwork.data.repository.mapper
 
 import com.example.star.aiwork.data.model.LlmError
+import com.example.star.aiwork.infra.network.NetworkException
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -20,6 +21,21 @@ fun Throwable.toLlmError(): LlmError {
     }
 
     return when (this) {
+        is NetworkException.HttpException -> {
+            when (this.code) {
+                401, 403 -> LlmError.AuthenticationError(cause = this)
+                408 -> LlmError.NetworkError("请求超时", this)
+                429 -> LlmError.RateLimitError(cause = this) // 这里直接将 HTTP 429 映射为 RateLimitError
+                in 500..599 -> LlmError.ServerError(cause = this)
+                else -> LlmError.RequestError(cause = this)
+            }
+        }
+        is NetworkException.TimeoutException -> {
+            LlmError.NetworkError("请求超时，请检查网络环境", this)
+        }
+        is NetworkException.ConnectionException -> {
+            LlmError.NetworkError("网络连接异常", this)
+        }
         is SocketTimeoutException, is TimeoutException -> {
             LlmError.NetworkError("请求超时，请检查网络环境", this)
         }
@@ -35,15 +51,6 @@ fun Throwable.toLlmError(): LlmError {
             }
         }
         else -> {
-            // 如果你有自定义的 HttpException (例如来自 Retrofit 或自己封装的)，在这里处理状态码
-            // 假设你有一个包含 code 的 HttpException
-            /* is HttpException -> when(this.code()) {
-                401 -> LlmError.AuthenticationError("认证失败", this)
-                429 -> LlmError.RateLimitError("请求过于频繁", this)
-                in 500..599 -> LlmError.ServerError("服务器内部错误", this)
-                else -> LlmError.NetworkError("HTTP ${this.code()}", this)
-            }
-            */
             LlmError.UnknownError(this.message ?: "未知错误", this)
         }
     }
