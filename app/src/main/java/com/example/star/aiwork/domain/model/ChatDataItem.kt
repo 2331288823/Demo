@@ -7,10 +7,12 @@ package com.example.star.aiwork.domain.model
  * @property content 消息的文本内容。
  * @property type 消息类型标识符（默认为 0，可用于区分文本、图像或其他类型的消息）。
  * @property localFilePath 本地文件路径（用于图片、音频等）。
+ * @property imageBase64 临时的 Base64 图片数据，仅用于发送请求，不持久化到数据库。
  */
 data class ChatDataItem(
     var role: String = "",
     var content: String = "",
     var type: Int = 0,
-    var localFilePath: String? = null
+    var localFilePath: String? = null,
+    var imageBase64: String? = null
 )

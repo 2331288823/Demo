@@ -27,6 +27,9 @@ import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.text.input.TextFieldValue
 import com.example.star.aiwork.R
 import com.example.star.aiwork.domain.model.Agent
+import com.example.star.aiwork.domain.model.Model
+import com.example.star.aiwork.domain.model.ProviderSetting
+import com.example.star.aiwork.domain.usecase.GenerateChatNameUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,6 +58,10 @@ class ConversationUiState(
     // 使用 SnapshotStateList 来存储消息，确保列表变更时能触发 Compose 重组
     private val _messages: MutableList<Message> = initialMessages.toMutableStateList()
     val messages: List<Message> = _messages
+
+    // 分页加载状态
+    var isLoadingMore: Boolean by mutableStateOf(false)
+    var allMessagesLoaded: Boolean by mutableStateOf(false)
 
     // AI 模型参数状态
     var temperature: Float by mutableFloatStateOf(0.7f)
@@ -103,10 +110,32 @@ class ConversationUiState(
     var selectedImageUri: Uri? by mutableStateOf(null)
 
     /**
+     * 用于生成预览卡片标题的UseCase
+     */
+    var generateChatNameUseCase: GenerateChatNameUseCase? = null
+
+    /**
+     * 当前活跃的Provider设置
+     */
+    var activeProviderSetting: ProviderSetting? = null
+
+    /**
+     * 当前活跃的Model
+     */
+    var activeModel: Model? = null
+
+    /**
      * 添加一条新消息到列表顶部。
      */
     fun addMessage(msg: Message) {
         _messages.add(0, msg) // Add to the beginning of the list
+    }
+
+    /**
+     * 添加历史消息到列表末尾
+     */
+    fun addOlderMessages(olderMessages: List<Message>) {
+        _messages.addAll(olderMessages)
     }
 
     /**
@@ -125,6 +154,8 @@ class ConversationUiState(
      */
     fun clearMessages() {
         _messages.clear()
+        isLoadingMore = false
+        allMessagesLoaded = false
     }
 
     /**
