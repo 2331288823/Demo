@@ -53,6 +53,7 @@ import com.example.star.aiwork.domain.usecase.PauseStreamingUseCase
 import com.example.star.aiwork.domain.usecase.RollbackMessageUseCase
 import com.example.star.aiwork.domain.usecase.SendMessageUseCase
 import com.example.star.aiwork.domain.usecase.embedding.ComputeEmbeddingUseCase
+import com.example.star.aiwork.domain.usecase.embedding.FilterMemoryMessagesUseCase
 import com.example.star.aiwork.domain.usecase.embedding.SaveEmbeddingUseCase
 import com.example.star.aiwork.domain.usecase.embedding.SearchEmbeddingUseCase
 import com.example.star.aiwork.data.repository.EmbeddingRepositoryImpl
@@ -142,13 +143,19 @@ class ConversationFragment : Fragment() {
                     EmbeddingRepositoryImpl(database.embeddingDao())
                 }
                 val computeEmbeddingUseCase = remember(embeddingService) {
-                    ComputeEmbeddingUseCase(embeddingService)
+                    ComputeEmbeddingUseCase(
+                        embeddingService = embeddingService,
+                        useRemote = false
+                    )
                 }
                 val searchEmbeddingUseCase = remember(embeddingRepository) {
                     SearchEmbeddingUseCase(embeddingRepository)
                 }
                 val saveEmbeddingUseCase = remember(embeddingRepository) {
                     SaveEmbeddingUseCase(embeddingRepository)
+                }
+                val filterMemoryMessagesUseCase = remember(aiRepository) {
+                    FilterMemoryMessagesUseCase(aiRepository)
                 }
 
                 val conversationLogic = remember(
@@ -158,7 +165,10 @@ class ConversationFragment : Fragment() {
                     providerSettings, // Add providerSettings as a dependency
                     computeEmbeddingUseCase,
                     searchEmbeddingUseCase,
-                    saveEmbeddingUseCase
+                    saveEmbeddingUseCase,
+                    filterMemoryMessagesUseCase,
+                    activeProviderId,
+                    activeModelId
                 ) {
                     ConversationLogic(
                         uiState = uiState,
@@ -197,7 +207,15 @@ class ConversationFragment : Fragment() {
                         computeEmbeddingUseCase = computeEmbeddingUseCase,
                         searchEmbeddingUseCase = searchEmbeddingUseCase,
                         saveEmbeddingUseCase = saveEmbeddingUseCase,
-                        embeddingTopK = 3
+                        filterMemoryMessagesUseCase = filterMemoryMessagesUseCase,
+                        embeddingTopK = 3,
+                        getProviderSetting = {
+                            providerSettings.find { it.id == activeProviderId } ?: providerSettings.firstOrNull()
+                        },
+                        getModel = {
+                            val provider = providerSettings.find { it.id == activeProviderId } ?: providerSettings.firstOrNull()
+                            provider?.models?.find { it.modelId == activeModelId } ?: provider?.models?.firstOrNull()
+                        }
                     )
                 }
 
